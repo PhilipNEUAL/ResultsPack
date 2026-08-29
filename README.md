@@ -15,7 +15,7 @@ Results Pack 1.0.0 was written to woek with the IANSEO **2026-03-01** release. B
 
 ## Installing ResultsPack
 
-Download the archive and extract the ZIP to
+Download the archive and extract the ZIP. Copy the contents of ResultsPack-main to:
 
 ```text
 ianseo/htdocs/Modules/Custom/ResultsPack/

@@ -15,12 +15,21 @@ Results Pack 1.0.0 is written to woek with the IANSEO **2026-03-01** release. Be
 
 ## Installing ResultsPack
 
-Download the archive and extract the ZIP. Copy the contents of ResultsPack-main to:
+Download the archive and extract the ZIP. 
+
+Navigate to:
+```text
+ianseo/htdocs/Modules/Custom/
+```
+And create a folder inside called "ResultsPack".
+
+Copy the contents of the extracted zip, ResultsPack-main, to:
 
 ```text
 ianseo/htdocs/Modules/Custom/ResultsPack/
 ```
-Then open IANSEO. Identify the new menu item and use:
+
+Then open IANSEO. Identify the new menu item and go:
 
 ```text
 Results Pack → Build results sheet

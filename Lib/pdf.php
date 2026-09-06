@@ -5,7 +5,7 @@ class ResultsPackPdf extends ResultPDF
 {
     public $ResultsPackCover = false;
     public $ResultsPackIssue = '';
-    public $ResultsPackSoftwareVersion = '1.0.0';
+    public $ResultsPackSoftwareVersion = '1.0.1';
     public $Continue = 'Continue';
     public $ResultsPackTableColour = 'classic';
     public $NumberThousandsSeparator = ',';

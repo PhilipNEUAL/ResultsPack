@@ -40,13 +40,13 @@ $defaultIssueDate = date('Y-m-d');
 $PAGE_TITLE = 'Complete Results Pack';
 $IncludeJquery = true;
 $JS_SCRIPT = array(
-    '<link rel="stylesheet" href="assets/results-pack.css?v=1.0.0" type="text/css">',
-    '<script src="assets/results-pack.js?v=1.0.0"></script>',
+    '<link rel="stylesheet" href="assets/results-pack.css?v=1.0.1" type="text/css">',
+    '<script src="assets/results-pack.js?v=1.0.1"></script>',
 );
 include('Common/Templates/head.php');
 
 echo '<table class="Tabella freeWidth resultspack-intro">';
-echo '<tr><th class="Main">Complete Results Pack - 1.0.0</th></tr>';
+echo '<tr><th class="Main">Complete Results Pack - 1.0.1</th></tr>';
 echo '</table>';
 
 echo '<form method="get" action="index.php">';

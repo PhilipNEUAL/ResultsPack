@@ -15,7 +15,7 @@ Results Pack 1.0.1 is written to work with the IANSEO **2026-03-01** release. Be
 
 ## Installing ResultsPack
 
-Option 1: Go to the Releases section of this repository and download the
+**Option 1:** Go to the Releases section of this repository and download the
 `ResultsPack-x.x.x.zip` file listed under Assets.
 
 Extract the downloaded ZIP. It contains a folder named "ResultsPack".
@@ -38,7 +38,7 @@ Then open IANSEO and go to:
     Results Pack → Build results sheet
 ```
 
-Option 2: Download the archive and extract the ZIP. 
+**Option 2:** Download the archive and extract the ZIP. 
 
 Navigate to:
 ```text

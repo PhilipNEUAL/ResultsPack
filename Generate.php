@@ -47,6 +47,11 @@ foreach ($defaults as $key => $default) {
     $value = resultspack_normalise_whitespace($_POST[$key] ?? '');
     $settings[$key] = $value !== '' ? $value : $default;
 }
+if (function_exists('mb_substr')) {
+    $settings['cover_title'] = mb_substr($settings['cover_title'], 0, 160, 'UTF-8');
+} else {
+    $settings['cover_title'] = substr($settings['cover_title'], 0, 160);
+}
 $settings['event_name_same_as_cover'] = !empty($_POST['event_name_same_as_cover']);
 if ($settings['event_name_same_as_cover']) {
     $settings['event_name'] = resultspack_normalise_whitespace($settings['cover_title']) !== '' ? $settings['cover_title'] : $defaults['event_name'];

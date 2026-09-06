@@ -255,95 +255,84 @@ function resultspack_pdf_cover_item($pdf, $letter, $heading, $value, $width, $co
 function resultspack_render_cover($pdf, array $settings, array $tournaments)
 {
     $width = resultspack_pdf_content_width($pdf);
-    $left = 10;
-    $pdf->SetY(24);
-    if (!empty($pdf->ToPaths['ToLeft'])) {
-        $pdf->Image($pdf->ToPaths['ToLeft'], $left, 20, 0, 25);
-    }
-    if (!empty($pdf->ToPaths['ToRight'])) {
-        $im = @getimagesize($pdf->ToPaths['ToRight']);
-        if ($im) {
-            $height = 25;
-            $imageWidth = $im[0] * $height / $im[1];
-            $pdf->Image($pdf->ToPaths['ToRight'], $pdf->getPageWidth() - 10 - $imageWidth, 20, $imageWidth, $height);
-        }
-    }
-    $pdf->SetFont($pdf->FontStd, 'B', 16);
-    $pdf->SetXY(35, 25);
-    $pdf->MultiCell($pdf->getPageWidth() - 70, 6.5, $settings['cover_title'], 0, 'C', 0, 1);
-    $pdf->Ln(1.5);
-    $pdf->SetFont($pdf->FontStd, 'B', 24);
-    $pdf->MultiCell($width, 10, $settings['document_title'], 0, 'C', 0, 1);
-    $pdf->Ln(5);
+$pageWidth = $pdf->getPageWidth();
 
-    $palette = resultspack_pdf_cover_palette($pdf->ResultsPackTableColour, 0);
-    $pdf->SetFillColor($palette['main'][0], $palette['main'][1], $palette['main'][2]);
-    if (resultspack_pdf_palette_key($pdf->ResultsPackTableColour) === 'rainbow') {
-        $text = $palette['text'];
-        $pdf->SetTextColor($text[0], $text[1], $text[2]);
-    } else {
-        $pdf->SetTextColor(255, 255, 255);
-    }
-    $pdf->SetFont($pdf->FontStd, 'B', 9);
-    $pdf->Cell($width, 6, 'Results sheet information', 0, 1, 'L', 1);
-    $pdf->SetDefaultColor();
-    $pdf->Ln(1.5);
+$logoY = 20;
+$logoHeight = 25;
+$outerMargin = 10;
+$logoGap = 5;
 
-    $items = array(
-        'a' => array('Name of event', $settings['event_name']),
-        'b' => array('Date(s) of event', $settings['date']),
-        'c' => array('Record status', $settings['status']),
-        'd' => array('Venue', $settings['venue']),
-        'e' => array('Tournament organiser', $settings['organiser']),
-        'f' => array('Weather conditions', $settings['weather']),
-        'g' => array("Tabular list of each archer's performance", $settings['individual_note']),
-        'h' => array('Archers who entered but did not shoot', $settings['did_not_shoot']),
-        'i' => array('Disqualified archers', $settings['disqualifications']),
-        'j' => array('Abnormal occurrences affecting the entire shoot', $settings['circumstances']),
-    );
-    $coverColourIndex = 0;
-    foreach ($items as $letter => $item) {
-        if ($letter === 'h' && empty($settings['include_dns_cover_row'])) {
-            continue;
-        }
-        resultspack_pdf_cover_item($pdf, $letter, $item[0], $item[1], $width, $coverColourIndex);
-        $coverColourIndex++;
-    }
+$titleLeft = $outerMargin;
+$titleRight = $pageWidth - $outerMargin;
 
-    $ceremonial = array();
-    if (!empty($settings['include_lady_paramount']) && resultspack_normalise_whitespace($settings['lady_paramount']) !== '') {
-        $ceremonial[] = 'Lady Paramount: ' . $settings['lady_paramount'];
+if (!empty($pdf->ToPaths['ToLeft'])) {
+    $im = @getimagesize($pdf->ToPaths['ToLeft']);
+
+    if ($im) {
+        $imageWidth = $im[0] * $logoHeight / $im[1];
+
+        $pdf->Image(
+            $pdf->ToPaths['ToLeft'],
+            $outerMargin,
+            $logoY,
+            $imageWidth,
+            $logoHeight
+        );
+
+        $titleLeft = $outerMargin + $imageWidth + $logoGap;
     }
-    if (!empty($settings['include_lord_patron']) && resultspack_normalise_whitespace($settings['lord_patron']) !== '') {
-        $ceremonial[] = 'Lord Patron: ' . $settings['lord_patron'];
+}
+
+if (!empty($pdf->ToPaths['ToRight'])) {
+    $im = @getimagesize($pdf->ToPaths['ToRight']);
+
+    if ($im) {
+        $imageWidth = $im[0] * $logoHeight / $im[1];
+
+        $pdf->Image(
+            $pdf->ToPaths['ToRight'],
+            $pageWidth - $outerMargin - $imageWidth,
+            $logoY,
+            $imageWidth,
+            $logoHeight
+        );
+
+        $titleRight = $pageWidth - $outerMargin - $imageWidth - $logoGap;
     }
-    if ($ceremonial) {
-        resultspack_pdf_cover_item($pdf, 'k', 'Ceremonial roles', implode("\n", $ceremonial), $width, $coverColourIndex);
+}
+
+$titleWidth = $titleRight - $titleLeft;
+
+$titleFontSize = 16;
+
+do {
+    $pdf->SetFont($pdf->FontStd, 'B', $titleFontSize);
+    $textWidth = $pdf->GetStringWidth($settings['cover_title']);
+
+    if ($textWidth <= ($titleWidth * 2) || $titleFontSize <= 10) {
+        break;
     }
 
-    $footerTop = $pdf->resultsPackFooterTop();
-    $publicationLines = array();
-    $customFooter = resultspack_normalise_whitespace($settings['cover_footer'] ?? '');
-    if ($customFooter !== '') {
-        $publicationLines[] = array($customFooter, '');
-    }
-    $revisionNote = resultspack_normalise_whitespace($settings['revision_note'] ?? '');
-    if ($revisionNote !== '') {
-        $publicationLines[] = array('Revision note: ' . $revisionNote, '');
-    }
-    $issueLabel = resultspack_normalise_whitespace($settings['issue_label'] ?? '');
-    if ($issueLabel !== '') {
-        $publicationLines[] = array($issueLabel, 'B');
-    }
-    $publicationLines[] = array('Results powered by I@NSEO', '');
+    $titleFontSize -= 0.5;
+} while ($titleFontSize >= 10);
 
-    $lineHeight = 4.5;
-    $blockHeight = count($publicationLines) * $lineHeight;
-    $pdf->SetY($footerTop - $blockHeight - 2.5);
-    foreach ($publicationLines as $line) {
-        $pdf->SetFont($pdf->FontStd, $line[1], 8.5);
-        $pdf->MultiCell($width, $lineHeight, $line[0], 0, 'C', 0, 1);
-    }
+$pdf->SetFont($pdf->FontStd, 'B', $titleFontSize);
+$pdf->SetXY($titleLeft, 21);
+
+$pdf->MultiCell(
+    $titleWidth,
+    6.5,
+    $settings['cover_title'],
+    0,
+    'C',
+    0,
+    1
+);
+
+$pdf->SetY(max($pdf->GetY() + 1.5, $logoY + $logoHeight + 1));
+
+$pdf->SetFont($pdf->FontStd, 'B', 24);
+$pdf->MultiCell($width, 10, $settings['document_title'], 0, 'C', 0, 1);
 }
 
 function resultspack_pdf_individual_layout(array $tournaments, array $distanceIndices = array())

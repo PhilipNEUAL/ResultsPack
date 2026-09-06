@@ -78,7 +78,7 @@ if ($selectedTournaments) {
 
     echo '<tr><td class="Bold">Cover page</td><td><label class="resultspack-section-master"><input type="checkbox" name="include_cover" value="1" checked> Include statutory Results Sheet cover page</label></td></tr>';
 
-    echo '<tr><td class="Bold">Document title</td><td><input type="text" name="cover_title" value="' . resultspack_h($defaultCoverTitle) . '"></td></tr>';
+    echo '<tr><td class="Bold">Document title</td><td><input type="text" name="cover_title" value="' . resultspack_h($defaultCoverTitle) . '" maxlength="160"><div class="resultspack-muted">Maximum 160 characters.</div></td></tr>';
     echo '<tr><td class="Bold">Document subtitle</td><td><input type="text" name="document_title" value="Results Sheet"></td></tr>';
     echo '<tr><td class="Bold">(a) Name of event</td><td>';
     echo '<label class="resultspack-link-toggle"><input type="checkbox" name="event_name_same_as_cover" value="1" checked> Use document title as event name</label>';

@@ -6,3 +6,6 @@
 
 # TEMPEST (secret)
 /WeatherConfig.local.php
+
+# VS Code workspace settings
+/.vscode/settings.json

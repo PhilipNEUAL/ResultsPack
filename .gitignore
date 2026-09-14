@@ -1,0 +1,8 @@
+# Release ZIPs
+/ResultsPack-*.ZIP
+
+# Release files
+/release-build/
+
+# TEMPEST (secret)
+/WeatherConfig.local.php

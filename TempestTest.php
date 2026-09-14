@@ -8,18 +8,11 @@ $PAGE_TITLE = 'Tempest Weather Test';
 include('Common/Templates/head.php');
 
 $summary = resultspack_weather_config_summary();
+$currentFreshness = null;
 
-$shootingBearing = null;
+$activeSession = resultspack_weather_get_active_session();
 
-if (isset($_GET['shooting_bearing']) && is_numeric($_GET['shooting_bearing'])) {
-    $shootingBearing = (float) $_GET['shooting_bearing'];
-
-    if ($shootingBearing >= 0 && $shootingBearing < 360) {
-        // Valid bearing.
-    } else {
-        $shootingBearing = null;
-    }
-}
+$shootingBearing = $activeSession['shooting_bearing'] ?? null;
 
 echo '<table class="Tabella freeWidth">';
 echo '<tr><th class="Main" colspan="2">Tempest Weather Integration Test</th></tr>';
@@ -126,20 +119,15 @@ if ($summary['configured']) {
             $obs = array_combine($fields, $values);
         }
 
+        $currentFreshness = resultspack_weather_freshness(
+            $obs['timestamp'] ?? null,
+            $obs['report_interval'] ?? 1
+        );
+
         echo '<tr><td class="Bold">Station</td><td>'
             . htmlspecialchars($station['name'] ?? 'Unnamed station')
             . '</td></tr>';
         
-        echo '<tr><td class="Bold">Shooting direction</td><td>';
-        echo '<form method="get" action="TempestTest.php" style="margin:0">';
-        echo '<input type="number" name="shooting_bearing" min="0" max="359" step="1"'
-            . ($shootingBearing !== null ? ' value="' . htmlspecialchars((string) $shootingBearing) . '"' : '')
-            . ' placeholder="0-359"> ° ';
-        echo '<input type="submit" value="Apply bearing">';
-        echo ' <span class="resultspack-muted">Direction from the shooting line towards the targets.</span>';
-        echo '</form>';
-        echo '</td></tr>';
-
         if (!empty($obs['timestamp'])) {
             $timezoneName = $data['timezone'] ?? 'UTC';
 
@@ -156,6 +144,36 @@ if ($summary['configured']) {
                 . ' <span class="resultspack-muted">('
                 . htmlspecialchars(resultspack_weather_observation_age($obs['timestamp']))
                 . ')</span></td></tr>';
+        }
+
+        if ($currentFreshness) {
+            if ($currentFreshness['status'] === 'live') {
+                $freshnessStyle = 'color:green';
+            } elseif ($currentFreshness['status'] === 'delayed') {
+                $freshnessStyle = 'color:#9a6700';
+            } else {
+                $freshnessStyle = 'color:#b00020';
+            }
+
+            echo '<tr>';
+            echo '<td class="Bold">Data status</td>';
+            echo '<td style="' . $freshnessStyle . '"><b>'
+                . htmlspecialchars($currentFreshness['label'])
+                . '</b>';
+
+            echo ' — last observation '
+                . htmlspecialchars($currentFreshness['age_text']);
+
+            if ($currentFreshness['report_interval_minutes'] !== null) {
+                echo ' (reporting every '
+                    . htmlspecialchars((string) $currentFreshness['report_interval_minutes'])
+                    . ' minute'
+                    . ($currentFreshness['report_interval_minutes'] == 1 ? '' : 's')
+                    . ')';
+            }
+
+            echo '</td>';
+            echo '</tr>';
         }
 
         echo '<tr><td class="Bold">Temperature</td><td>'
@@ -209,32 +227,249 @@ if ($summary['configured']) {
             . ' mm</td></tr>';
 
         $strikeCount = isset($obs['strike_count']) && is_numeric($obs['strike_count'])
-            ? (int) $obs['strike_count']
-            : 0;
+    ? (int) $obs['strike_count']
+    : 0;
 
-        if ($strikeCount > 0) {
-            echo '<tr style="background:#fff3cd">';
-            echo '<td class="Bold">Lightning detected</td>';
-            echo '<td><b>'
-                . htmlspecialchars((string) $strikeCount)
-                . ' strike' . ($strikeCount === 1 ? '' : 's')
-                . ' detected during this observation';
+    //Lightning information must not be presented as current if the observation is delayed, stale or unavailable.
+    if (!$currentFreshness || $currentFreshness['status'] !== 'live') {
+        $freshnessLabel = $currentFreshness
+            ? $currentFreshness['label']
+            : 'UNKNOWN';
 
-            if (isset($obs['strike_distance']) && is_numeric($obs['strike_distance'])) {
-                echo ' — average distance '
-                    . resultspack_weather_format_number($obs['strike_distance'], 1)
-                    . ' km';
-            }
+        echo '<tr style="background:#fff3cd">';
+        echo '<td class="Bold">Lightning status</td>';
+        echo '<td><b>Current lightning status unavailable</b>';
 
-            echo '</b></td></tr>';
-        } else {
-            echo '<tr><td class="Bold">Lightning</td>';
-            echo '<td>No strikes detected during the current observation.</td></tr>';
+        echo ' — Tempest data is '
+            . htmlspecialchars($freshnessLabel);
+
+        if ($currentFreshness && !empty($currentFreshness['age_text'])) {
+            echo ' (' . htmlspecialchars($currentFreshness['age_text']) . ')';
         }
+
+        echo '.</td>';
+        echo '</tr>';
+
+    } elseif ($strikeCount > 0) {
+        echo '<tr style="background:#fff3cd">';
+        echo '<td class="Bold">Lightning detected</td>';
+        echo '<td><b>'
+            . htmlspecialchars((string) $strikeCount)
+            . ' strike' . ($strikeCount === 1 ? '' : 's')
+            . ' detected during this observation';
+
+        if (isset($obs['strike_distance']) && is_numeric($obs['strike_distance'])) {
+            echo ' — average distance '
+                . resultspack_weather_format_number($obs['strike_distance'], 1)
+                . ' km';
+        }
+
+        echo '</b></td>';
+        echo '</tr>';
+
+    } else {
+        echo '<tr>';
+        echo '<td class="Bold">Lightning</td>';
+        echo '<td>No strikes detected during the current observation.</td>';
+        echo '</tr>';
+    }
     }
 
     echo '</table>';
 }
+}
+
+//Weather research session controls.
+if ($summary['configured']) {
+    $tournamentList = resultspack_fetch_tournament_list();
+    $latestSession = resultspack_weather_get_latest_session();
+
+    echo '<br>';
+    echo '<table class="Tabella freeWidth">';
+    echo '<tr><th class="Main" colspan="2">Weather research session</th></tr>';
+
+    if (($_GET['session'] ?? '') === 'started') {
+        echo '<tr><td colspan="2" style="color:green"><b>Weather session started.</b></td></tr>';
+    } elseif (($_GET['session'] ?? '') === 'stopped') {
+        echo '<tr><td colspan="2" style="color:green"><b>Weather session stopped.</b></td></tr>';
+    }
+
+    if ($activeSession) {
+        $tournamentName = 'Competition ' . $activeSession['tournament_id'];
+
+        foreach ($tournamentList as $tournament) {
+            if ((int) $tournament['id'] === (int) $activeSession['tournament_id']) {
+                $tournamentName =
+                    ($tournament['code'] !== '' ? $tournament['code'] . ' — ' : '')
+                    . $tournament['name'];
+                break;
+            }
+        }
+
+        try {
+            $startedTime = new DateTime('@' . $activeSession['started_epoch']);
+            $startedTime->setTimezone(
+                new DateTimeZone($activeSession['timezone'] ?: 'UTC')
+            );
+            $startedLabel = $startedTime->format('d/m/Y H:i:s');
+        } catch (Exception $e) {
+            $startedLabel = date('d/m/Y H:i:s', $activeSession['started_epoch']);
+        }
+
+        echo '<tr><td class="Bold">Status</td><td><b style="color:green">Active</b></td></tr>';
+
+        echo '<tr><td class="Bold">Competition</td><td>'
+            . htmlspecialchars($tournamentName)
+            . '</td></tr>';
+
+        echo '<tr><td class="Bold">Station</td><td>'
+            . htmlspecialchars($activeSession['station_name'])
+            . ' (' . (int) $activeSession['station_id'] . ')'
+            . '</td></tr>';
+
+        echo '<tr><td class="Bold">Started</td><td>'
+            . htmlspecialchars($startedLabel)
+            . '</td></tr>';
+
+        echo '<tr><td class="Bold">Shooting bearing</td><td>'
+            . ($activeSession['shooting_bearing'] !== null
+                ? htmlspecialchars((string) $activeSession['shooting_bearing']) . '°'
+                : 'Not recorded')
+            . '</td></tr>';
+
+        echo '<tr><td class="Bold">Sensor height</td><td>'
+            . ($activeSession['sensor_height'] !== null
+                ? htmlspecialchars((string) $activeSession['sensor_height']) . ' m'
+                : 'Not recorded')
+            . '</td></tr>';
+
+        echo '<tr><td class="Bold">Position notes</td><td>'
+            . ($activeSession['position_notes'] !== ''
+                ? nl2br(htmlspecialchars($activeSession['position_notes']))
+                : 'None')
+            . '</td></tr>';
+
+        echo '<tr><td colspan="2">';
+
+        echo '<form method="post" action="WeatherSessionAction.php" style="margin:0">';
+        echo '<input type="hidden" name="csrf_token" value="'
+            . htmlspecialchars(resultspack_csrf_token())
+            . '">';
+        echo '<input type="hidden" name="weather_action" value="stop">';
+        echo '<input type="submit" value="Stop weather session">';
+        echo '</form>';
+
+        echo '</td></tr>';
+    } else {
+        echo '<tr><td class="Bold">Competition</td><td>';
+
+        echo '<form method="post" action="WeatherSessionAction.php">';
+
+        echo '<input type="hidden" name="csrf_token" value="'
+            . htmlspecialchars(resultspack_csrf_token())
+            . '">';
+
+        echo '<input type="hidden" name="weather_action" value="start">';
+
+        echo '<select name="tournament_id" required>';
+        echo '<option value="">Choose competition...</option>';
+
+        foreach ($tournamentList as $tournament) {
+            $label =
+                ($tournament['code'] !== '' ? $tournament['code'] . ' — ' : '')
+                . $tournament['name'];
+
+        $selected = (
+            $latestSession
+            && (int) $latestSession['tournament_id'] === (int) $tournament['id']
+        ) ? ' selected' : '';
+
+        echo '<option value="' . (int) $tournament['id'] . '"' . $selected . '>'
+            . htmlspecialchars($label)
+            . '</option>';
+        }
+
+        echo '</select>';
+
+        echo '</td></tr>';
+
+        if ($latestSession) {
+            echo '<div class="resultspack-muted">'
+                . 'Setup details have been carried forward from the previous weather session. '
+                . 'Review them before starting a new session.'
+                . '</div>';
+        }
+
+        echo '<tr><td class="Bold">Shooting bearing</td><td>';
+        $previousBearing = $latestSession['shooting_bearing'] ?? null;
+
+        echo '<input type="number" name="shooting_bearing" min="0" max="359" step="1" required'
+            . ($previousBearing !== null
+                ? ' value="' . htmlspecialchars((string) $previousBearing) . '"'
+                : '')
+            . '> °'; 
+        echo '<div class="resultspack-muted">Direction from the shooting line towards the targets.</div>';
+        echo '</td></tr>';
+
+        echo '<tr><td class="Bold">Sensor height</td><td>';
+        $previousHeight = $latestSession['sensor_height'] ?? null;
+
+        echo '<input type="number" name="sensor_height" min="0.1" max="20" step="0.01"'
+            . ($previousHeight !== null
+                ? ' value="' . htmlspecialchars((string) $previousHeight) . '"'
+                : '')
+            . '> m';
+        echo '<div class="resultspack-muted">Height of the Tempest sensor above ground level.</div>';
+        echo '</td></tr>';
+
+        echo '<tr><td class="Bold">Station position / obstructions</td><td>';
+        $previousNotes = $latestSession['position_notes'] ?? '';
+
+        echo '<textarea name="position_notes" rows="3" placeholder="For example: 10 m behind shooting line; open field; trees approximately 40 m west.">'
+            . htmlspecialchars($previousNotes)
+            . '</textarea>';
+        echo '</td></tr>';
+
+        if (!$currentFreshness || $currentFreshness['status'] !== 'live') {
+            $freshnessLabel = $currentFreshness
+                ? $currentFreshness['label']
+                : 'UNKNOWN';
+
+            echo '<tr>';
+            echo '<td class="Bold">Weather data warning</td>';
+            echo '<td style="background:#fff3cd">';
+
+            echo '<b>Tempest data is currently '
+                . htmlspecialchars($freshnessLabel)
+                . '.</b> ';
+
+            if ($currentFreshness && !empty($currentFreshness['age_text'])) {
+                echo 'The latest observation is '
+                    . htmlspecialchars($currentFreshness['age_text'])
+                    . '. ';
+            }
+
+            echo 'The session can still be started, but the current weather data '
+                . 'must not be assumed to describe present conditions.';
+
+            echo '<div style="margin-top:8px">';
+            echo '<label>';
+            echo '<input type="checkbox" name="allow_nonlive_weather" value="1" required> ';
+            echo 'Start this research session anyway';
+            echo '</label>';
+            echo '</div>';
+
+            echo '</td>';
+            echo '</tr>';
+        }
+
+        echo '<tr><td colspan="2">';
+        echo '<input type="submit" value="Start weather session">';
+        echo '</form>';
+        echo '</td></tr>';
+    }
+
+    echo '</table>';
 }
 
 include('Common/Templates/tail.php');

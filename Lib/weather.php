@@ -207,12 +207,11 @@ function resultspack_weather_observation_age($timestamp)
     return $hours === 1 ? '1 hour ago' : $hours . ' hours ago';
 }
 
-/**
- * Describe wind direction relative to the shooting direction.
- *
+/* Describe wind direction relative to the shooting direction.
+ * This might be overkill but I thought I'd give it a try.
+ * He said, overkill, in a module about recording hyper-local weather events for archery shoots.
  * Tempest wind direction is the direction the wind is coming FROM.
- * Shooting bearing is the direction from the shooting line towards the targets.
- */
+ * Shooting bearing is the direction from the shooting line towards the targets.*/
 function resultspack_weather_relative_wind($windDirection, $shootingBearing)
 {
     if (!is_numeric($windDirection) || !is_numeric($shootingBearing)) {
@@ -250,5 +249,283 @@ function resultspack_weather_relative_wind($windDirection, $shootingBearing)
     return array(
         'angle' => round($relative, 1),
         'label' => $label,
+    );
+}
+
+//Create a weather session table when first needed.
+function resultspack_weather_ensure_sessions_table()
+{
+    static $done = false;
+
+    if ($done) {
+        return;
+    }
+
+    safe_w_sql(
+        "CREATE TABLE IF NOT EXISTS CustomResultsPackWeatherSessions (" .
+        "CrwsId int unsigned NOT NULL AUTO_INCREMENT," .
+        "CrwsTournament int NOT NULL," .
+        "CrwsStationId int NOT NULL," .
+        "CrwsDeviceId int DEFAULT NULL," .
+        "CrwsStationName varchar(255) NOT NULL DEFAULT ''," .
+        "CrwsStartedEpoch bigint unsigned NOT NULL," .
+        "CrwsEndedEpoch bigint unsigned DEFAULT NULL," .
+        "CrwsTimezone varchar(64) NOT NULL DEFAULT 'UTC'," .
+        "CrwsShootingBearing decimal(5,1) DEFAULT NULL," .
+        "CrwsSensorHeight decimal(5,2) DEFAULT NULL," .
+        "CrwsPositionNotes text NOT NULL," .
+        "CrwsCreated datetime NOT NULL," .
+        "PRIMARY KEY (CrwsId)," .
+        "KEY CrwsTournament (CrwsTournament)," .
+        "KEY CrwsActive (CrwsEndedEpoch)" .
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+
+    $done = true;
+}
+
+//Return the active weather session, if there is one.
+function resultspack_weather_get_active_session()
+{
+    resultspack_weather_ensure_sessions_table();
+
+    $result = safe_r_sql(
+        "SELECT CrwsId,CrwsTournament,CrwsStationId,CrwsDeviceId," .
+        "CrwsStationName,CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
+        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes " .
+        "FROM CustomResultsPackWeatherSessions " .
+        "WHERE CrwsEndedEpoch IS NULL " .
+        "ORDER BY CrwsId DESC LIMIT 1"
+    );
+
+    $row = safe_fetch($result);
+
+    if (!$row) {
+        return null;
+    }
+
+    return array(
+        'id' => (int) $row->CrwsId,
+        'tournament_id' => (int) $row->CrwsTournament,
+        'station_id' => (int) $row->CrwsStationId,
+        'device_id' => $row->CrwsDeviceId !== null ? (int) $row->CrwsDeviceId : null,
+        'station_name' => (string) $row->CrwsStationName,
+        'started_epoch' => (int) $row->CrwsStartedEpoch,
+        'ended_epoch' => $row->CrwsEndedEpoch !== null ? (int) $row->CrwsEndedEpoch : null,
+        'timezone' => (string) $row->CrwsTimezone,
+        'shooting_bearing' => $row->CrwsShootingBearing !== null ? (float) $row->CrwsShootingBearing : null,
+        'sensor_height' => $row->CrwsSensorHeight !== null ? (float) $row->CrwsSensorHeight : null,
+        'position_notes' => (string) $row->CrwsPositionNotes,
+    );
+}
+
+//Start a new weather-monitoring session.
+function resultspack_weather_start_session(array $values)
+{
+    resultspack_weather_ensure_sessions_table();
+
+    if (resultspack_weather_get_active_session()) {
+        return array(
+            'ok' => false,
+            'error' => 'A weather session is already active.',
+        );
+    }
+
+    $tournamentId = (int) ($values['tournament_id'] ?? 0);
+    $stationId = (int) ($values['station_id'] ?? 0);
+    $deviceId = (int) ($values['device_id'] ?? 0);
+
+    if ($tournamentId <= 0) {
+        return array('ok' => false, 'error' => 'No competition was selected.');
+    }
+
+    if ($stationId <= 0) {
+        return array('ok' => false, 'error' => 'No Tempest station was available.');
+    }
+
+    $stationName = resultspack_normalise_whitespace($values['station_name'] ?? '');
+    $timezone = resultspack_normalise_whitespace($values['timezone'] ?? 'UTC');
+
+    if ($timezone === '') {
+        $timezone = 'UTC';
+    }
+
+    $bearing = null;
+
+    if (isset($values['shooting_bearing']) && is_numeric($values['shooting_bearing'])) {
+        $candidate = (float) $values['shooting_bearing'];
+
+        if ($candidate >= 0 && $candidate < 360) {
+            $bearing = $candidate;
+        }
+    }
+
+    $sensorHeight = null;
+
+    if (isset($values['sensor_height']) && is_numeric($values['sensor_height'])) {
+        $candidate = (float) $values['sensor_height'];
+
+        if ($candidate > 0 && $candidate <= 20) {
+            $sensorHeight = $candidate;
+        }
+    }
+
+    $positionNotes = trim((string) ($values['position_notes'] ?? ''));
+
+    if (function_exists('mb_substr')) {
+        $positionNotes = mb_substr($positionNotes, 0, 2000, 'UTF-8');
+    } else {
+        $positionNotes = substr($positionNotes, 0, 2000);
+    }
+
+    $started = time();
+
+    $deviceSql = $deviceId > 0 ? (string) $deviceId : 'NULL';
+    $bearingSql = $bearing !== null
+        ? number_format($bearing, 1, '.', '')
+        : 'NULL';
+    $heightSql = $sensorHeight !== null
+        ? number_format($sensorHeight, 2, '.', '')
+        : 'NULL';
+
+    safe_w_sql(
+        "INSERT INTO CustomResultsPackWeatherSessions (" .
+        "CrwsTournament,CrwsStationId,CrwsDeviceId,CrwsStationName," .
+        "CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
+        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes,CrwsCreated" .
+        ") VALUES (" .
+        $tournamentId . "," .
+        $stationId . "," .
+        $deviceSql . "," .
+        StrSafe_DB($stationName) . "," .
+        $started . "," .
+        "NULL," .
+        StrSafe_DB($timezone) . "," .
+        $bearingSql . "," .
+        $heightSql . "," .
+        StrSafe_DB($positionNotes) . "," .
+        "NOW())"
+    );
+
+    return array(
+        'ok' => true,
+        'started_epoch' => $started,
+    );
+}
+
+//End the currently active weather-monitoring session.
+function resultspack_weather_stop_session()
+{
+    $session = resultspack_weather_get_active_session();
+
+    if (!$session) {
+        return array(
+            'ok' => false,
+            'error' => 'There is no active weather session.',
+        );
+    }
+
+    $ended = time();
+
+    safe_w_sql(
+        "UPDATE CustomResultsPackWeatherSessions " .
+        "SET CrwsEndedEpoch=" . $ended .
+        " WHERE CrwsId=" . (int) $session['id'] .
+        " AND CrwsEndedEpoch IS NULL"
+    );
+
+    return array(
+        'ok' => true,
+        'ended_epoch' => $ended,
+    );
+}
+
+//Return the most recently created weather session.
+function resultspack_weather_get_latest_session()
+{
+    resultspack_weather_ensure_sessions_table();
+
+    $result = safe_r_sql(
+        "SELECT CrwsId,CrwsTournament,CrwsStationId,CrwsDeviceId," .
+        "CrwsStationName,CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
+        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes " .
+        "FROM CustomResultsPackWeatherSessions " .
+        "ORDER BY CrwsId DESC LIMIT 1"
+    );
+
+    $row = safe_fetch($result);
+
+    if (!$row) {
+        return null;
+    }
+
+    return array(
+        'id' => (int) $row->CrwsId,
+        'tournament_id' => (int) $row->CrwsTournament,
+        'station_id' => (int) $row->CrwsStationId,
+        'device_id' => $row->CrwsDeviceId !== null ? (int) $row->CrwsDeviceId : null,
+        'station_name' => (string) $row->CrwsStationName,
+        'started_epoch' => (int) $row->CrwsStartedEpoch,
+        'ended_epoch' => $row->CrwsEndedEpoch !== null ? (int) $row->CrwsEndedEpoch : null,
+        'timezone' => (string) $row->CrwsTimezone,
+        'shooting_bearing' => $row->CrwsShootingBearing !== null
+            ? (float) $row->CrwsShootingBearing
+            : null,
+        'sensor_height' => $row->CrwsSensorHeight !== null
+            ? (float) $row->CrwsSensorHeight
+            : null,
+        'position_notes' => (string) $row->CrwsPositionNotes,
+    );
+}
+
+/**
+ * Assess age of Tempest observation.
+ *
+ * LIVE:
+ *     no more than 2 reporting intervals old
+ *
+ * DELAYED:
+ *     more than 2 but no more than 5 reporting intervals old
+ *
+ * STALE:
+ *     more than 5 reporting intervals old
+ */
+function resultspack_weather_freshness($timestamp, $reportInterval = 1)
+{
+    if (!is_numeric($timestamp)) {
+        return array(
+            'status' => 'unknown',
+            'label' => 'UNKNOWN',
+            'age_seconds' => null,
+            'age_text' => 'Observation time unavailable',
+            'report_interval_minutes' => null,
+        );
+    }
+
+    if (!is_numeric($reportInterval) || (float) $reportInterval <= 0) {
+        $reportInterval = 1;
+    }
+
+    $reportInterval = (float) $reportInterval;
+    $ageSeconds = max(0, time() - (int) $timestamp);
+    $intervalSeconds = $reportInterval * 60;
+
+    if ($ageSeconds <= ($intervalSeconds * 2)) {
+        $status = 'live';
+        $label = 'LIVE';
+    } elseif ($ageSeconds <= ($intervalSeconds * 5)) {
+        $status = 'delayed';
+        $label = 'DELAYED';
+    } else {
+        $status = 'stale';
+        $label = 'STALE';
+    }
+
+    return array(
+        'status' => $status,
+        'label' => $label,
+        'age_seconds' => $ageSeconds,
+        'age_text' => resultspack_weather_observation_age($timestamp),
+        'report_interval_minutes' => $reportInterval,
     );
 }

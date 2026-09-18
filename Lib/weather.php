@@ -630,3 +630,172 @@ function resultspack_weather_get_completed_session($sessionId)
 
     return null;
 }
+
+//Create the locally stored Tempest observation table when first needed.
+function resultspack_weather_ensure_observations_table()
+{
+    static $done = false;
+
+    if ($done) {
+        return;
+    }
+
+    safe_w_sql(
+        "CREATE TABLE IF NOT EXISTS CustomResultsPackWeatherObservations (" .
+        "CrwoId int unsigned NOT NULL AUTO_INCREMENT," .
+        "CrwoSession int unsigned NOT NULL," .
+        "CrwoTimestamp bigint unsigned NOT NULL," .
+        "CrwoReportInterval int unsigned DEFAULT NULL," .
+        "CrwoWindLull decimal(10,3) DEFAULT NULL," .
+        "CrwoWindAvg decimal(10,3) DEFAULT NULL," .
+        "CrwoWindGust decimal(10,3) DEFAULT NULL," .
+        "CrwoWindDir decimal(6,2) DEFAULT NULL," .
+        "CrwoStationPressure decimal(10,3) DEFAULT NULL," .
+        "CrwoSeaLevelPressure decimal(10,3) DEFAULT NULL," .
+        "CrwoAirTemp decimal(10,3) DEFAULT NULL," .
+        "CrwoRh decimal(6,2) DEFAULT NULL," .
+        "CrwoIlluminance decimal(14,3) DEFAULT NULL," .
+        "CrwoUv decimal(10,3) DEFAULT NULL," .
+        "CrwoSolarRadiation decimal(14,3) DEFAULT NULL," .
+        "CrwoPrecipAccumulation decimal(14,6) DEFAULT NULL," .
+        "CrwoLocalDayPrecipAccumulation decimal(14,6) DEFAULT NULL," .
+        "CrwoPrecipType int DEFAULT NULL," .
+        "CrwoStrikeCount int DEFAULT NULL," .
+        "CrwoStrikeDistance decimal(10,3) DEFAULT NULL," .
+        "CrwoImported datetime NOT NULL," .
+        "PRIMARY KEY (CrwoId)," .
+        "UNIQUE KEY CrwoSessionTimestamp (CrwoSession,CrwoTimestamp)," .
+        "KEY CrwoSession (CrwoSession)," .
+        "KEY CrwoTimestamp (CrwoTimestamp)" .
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+
+    $done = true;
+}
+
+//Turn a nullable numeric Tempest value into safeSQL.
+function resultspack_weather_sql_number($value)
+{
+    if ($value === null || $value === '' || !is_numeric($value)) {
+        return 'NULL';
+    }
+
+    return (string) (0 + $value);
+}
+
+//Count locally stored observations for one weather session.
+function resultspack_weather_count_observations($sessionId)
+{
+    resultspack_weather_ensure_observations_table();
+
+    $sessionId = (int) $sessionId;
+
+    $result = safe_r_sql(
+        "SELECT COUNT(*) AS ObservationCount " .
+        "FROM CustomResultsPackWeatherObservations " .
+        "WHERE CrwoSession=" . $sessionId
+    );
+
+    $row = safe_fetch($result);
+
+    return $row ? (int) $row->ObservationCount : 0;
+}
+
+//Import historical Tempest observations for a completed session. Duplicate session/timestamp combinations are ignored.
+function resultspack_weather_import_session_observations($sessionId)
+{
+    resultspack_weather_ensure_observations_table();
+
+    $session = resultspack_weather_get_completed_session($sessionId);
+
+    if (!$session) {
+        return array(
+            'ok' => false,
+            'error' => 'Completed weather session not found.',
+        );
+    }
+
+    $response = resultspack_weather_fetch_observations(
+        $session['station_id'],
+        $session['started_epoch'],
+        $session['ended_epoch']
+    );
+
+    if (!$response['ok']) {
+        return $response;
+    }
+
+    $data = $response['data'];
+
+    $fields = $data['ob_fields'] ?? array();
+    $rows = $data['obs'] ?? array();
+
+    if (!$fields || !$rows) {
+        return array(
+            'ok' => true,
+            'received' => 0,
+            'before' => resultspack_weather_count_observations($sessionId),
+            'after' => resultspack_weather_count_observations($sessionId),
+            'added' => 0,
+        );
+    }
+
+    $before = resultspack_weather_count_observations($sessionId);
+
+    foreach ($rows as $values) {
+        if (count($fields) !== count($values)) {
+            continue;
+        }
+
+        $obs = array_combine($fields, $values);
+
+        $timestamp = isset($obs['timestamp'])
+            ? (int) $obs['timestamp']
+            : 0;
+
+        if ($timestamp <= 0) {
+            continue;
+        }
+
+        safe_w_sql(
+            "INSERT IGNORE INTO CustomResultsPackWeatherObservations (" .
+            "CrwoSession,CrwoTimestamp,CrwoReportInterval," .
+            "CrwoWindLull,CrwoWindAvg,CrwoWindGust,CrwoWindDir," .
+            "CrwoStationPressure,CrwoSeaLevelPressure,CrwoAirTemp,CrwoRh," .
+            "CrwoIlluminance,CrwoUv,CrwoSolarRadiation," .
+            "CrwoPrecipAccumulation,CrwoLocalDayPrecipAccumulation," .
+            "CrwoPrecipType,CrwoStrikeCount,CrwoStrikeDistance,CrwoImported" .
+            ") VALUES (" .
+            (int) $sessionId . "," .
+            $timestamp . "," .
+            resultspack_weather_sql_number($obs['report_interval'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['wind_lull'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['wind_avg'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['wind_gust'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['wind_dir'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['station_pressure'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['sea_level_pressure'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['air_temp'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['rh'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['illuminance'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['uv'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['solar_radiation'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['precip_accumulation'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['local_day_precip_accumulation'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['precip_type'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['strike_count'] ?? null) . "," .
+            resultspack_weather_sql_number($obs['strike_distance'] ?? null) . "," .
+            "NOW())"
+        );
+    }
+
+    $after = resultspack_weather_count_observations($sessionId);
+
+    return array(
+        'ok' => true,
+        'received' => count($rows),
+        'before' => $before,
+        'after' => $after,
+        'added' => max(0, $after - $before),
+    );
+}

@@ -288,6 +288,15 @@ if ($summary['configured']) {
     echo '<table class="Tabella freeWidth">';
     echo '<tr><th class="Main" colspan="2">Weather research session</th></tr>';
 
+    if (!$activeSession && $latestSession) {
+        echo '<tr>';
+        echo '<td colspan="2" class="resultspack-muted">';
+        echo 'Setup details have been carried forward from the previous weather session. '
+            . 'Review them before starting a new session.';
+        echo '</td>';
+        echo '</tr>';
+    }
+
     if (($_GET['session'] ?? '') === 'started') {
         echo '<tr><td colspan="2" style="color:green"><b>Weather session started.</b></td></tr>';
     } elseif (($_GET['session'] ?? '') === 'stopped') {
@@ -393,13 +402,6 @@ if ($summary['configured']) {
 
         echo '</td></tr>';
 
-        if ($latestSession) {
-            echo '<div class="resultspack-muted">'
-                . 'Setup details have been carried forward from the previous weather session. '
-                . 'Review them before starting a new session.'
-                . '</div>';
-        }
-
         echo '<tr><td class="Bold">Shooting bearing</td><td>';
         $previousBearing = $latestSession['shooting_bearing'] ?? null;
 
@@ -478,6 +480,21 @@ $completedSessions = resultspack_weather_get_completed_sessions();
 echo '<br>';
 echo '<table class="Tabella freeWidth">';
 echo '<tr><th class="Main" colspan="2">Historical observation test</th></tr>';
+
+if (($_GET['imported'] ?? '') === '1') {
+    $received = (int) ($_GET['received'] ?? 0);
+    $added = (int) ($_GET['added'] ?? 0);
+
+    echo '<tr><td colspan="2" style="color:green"><b>'
+        . 'Import complete.</b> '
+        . $received . ' observation'
+        . ($received === 1 ? '' : 's')
+        . ' received from Tempest; '
+        . $added . ' new observation'
+        . ($added === 1 ? '' : 's')
+        . ' stored locally.'
+        . '</td></tr>';
+}
 
 if (!$completedSessions) {
     echo '<tr><td colspan="2">No completed weather sessions are available yet.</td></tr>';
@@ -605,6 +622,31 @@ if (!$completedSessions) {
             echo '<tr><td class="Bold">Observations returned</td><td>'
                 . htmlspecialchars((string) count($historyRows))
                 . '</td></tr>';
+
+            $storedObservationCount =
+            resultspack_weather_count_observations($selectedHistorySession['id']);
+
+            echo '<tr><td class="Bold">Stored locally</td><td>'
+                . (int) $storedObservationCount
+                . '</td></tr>';
+
+            echo '<tr><td class="Bold">Import</td><td>';
+
+            echo '<form method="post" action="WeatherImportAction.php" style="margin:0">';
+
+            echo '<input type="hidden" name="csrf_token" value="'
+                . htmlspecialchars(resultspack_csrf_token())
+                . '">';
+
+            echo '<input type="hidden" name="session_id" value="'
+                . (int) $selectedHistorySession['id']
+                . '">';
+
+            echo '<input type="submit" value="Import observations into IANSEO">';
+
+            echo '</form>';
+
+            echo '</td></tr>';
 
             if ($historyRows) {
                 $firstValues = reset($historyRows);

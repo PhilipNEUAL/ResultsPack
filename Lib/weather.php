@@ -303,7 +303,7 @@ function resultspack_weather_ensure_sessions_table()
         return;
     }
 
-    safe_w_sql(
+        safe_w_sql(
         "CREATE TABLE IF NOT EXISTS CustomResultsPackWeatherSessions (" .
         "CrwsId int unsigned NOT NULL AUTO_INCREMENT," .
         "CrwsTournament int NOT NULL," .
@@ -316,12 +316,26 @@ function resultspack_weather_ensure_sessions_table()
         "CrwsShootingBearing decimal(5,1) DEFAULT NULL," .
         "CrwsSensorHeight decimal(5,2) DEFAULT NULL," .
         "CrwsPositionNotes text NOT NULL," .
+        "CrwsResearchStatus varchar(16) NOT NULL DEFAULT 'test'," .
         "CrwsCreated datetime NOT NULL," .
         "PRIMARY KEY (CrwsId)," .
         "KEY CrwsTournament (CrwsTournament)," .
         "KEY CrwsActive (CrwsEndedEpoch)" .
         ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     );
+
+    $columnCheck = safe_r_sql(
+        "SHOW COLUMNS FROM CustomResultsPackWeatherSessions " .
+        "LIKE 'CrwsResearchStatus'"
+    );
+
+    if (!safe_fetch($columnCheck)) {
+        safe_w_sql(
+            "ALTER TABLE CustomResultsPackWeatherSessions " .
+            "ADD COLUMN CrwsResearchStatus varchar(16) NOT NULL DEFAULT 'test' " .
+            "AFTER CrwsPositionNotes"
+        );
+    }
 
     $done = true;
 }
@@ -334,7 +348,7 @@ function resultspack_weather_get_active_session()
     $result = safe_r_sql(
         "SELECT CrwsId,CrwsTournament,CrwsStationId,CrwsDeviceId," .
         "CrwsStationName,CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
-        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes " .
+        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes,CrwsResearchStatus " .
         "FROM CustomResultsPackWeatherSessions " .
         "WHERE CrwsEndedEpoch IS NULL " .
         "ORDER BY CrwsId DESC LIMIT 1"
@@ -358,6 +372,7 @@ function resultspack_weather_get_active_session()
         'shooting_bearing' => $row->CrwsShootingBearing !== null ? (float) $row->CrwsShootingBearing : null,
         'sensor_height' => $row->CrwsSensorHeight !== null ? (float) $row->CrwsSensorHeight : null,
         'position_notes' => (string) $row->CrwsPositionNotes,
+        'research_status' => resultspack_weather_research_status((string) $row->CrwsResearchStatus),
     );
 }
 
@@ -420,6 +435,10 @@ function resultspack_weather_start_session(array $values)
         $positionNotes = substr($positionNotes, 0, 2000);
     }
 
+    $researchStatus = resultspack_weather_research_status(
+    $values['research_status'] ?? 'real'
+    );
+
     $started = time();
 
     $deviceSql = $deviceId > 0 ? (string) $deviceId : 'NULL';
@@ -434,7 +453,8 @@ function resultspack_weather_start_session(array $values)
         "INSERT INTO CustomResultsPackWeatherSessions (" .
         "CrwsTournament,CrwsStationId,CrwsDeviceId,CrwsStationName," .
         "CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
-        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes,CrwsCreated" .
+        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes," .
+        "CrwsResearchStatus,CrwsCreated" .
         ") VALUES (" .
         $tournamentId . "," .
         $stationId . "," .
@@ -446,6 +466,7 @@ function resultspack_weather_start_session(array $values)
         $bearingSql . "," .
         $heightSql . "," .
         StrSafe_DB($positionNotes) . "," .
+        StrSafe_DB($researchStatus) . "," .
         "NOW())"
     );
 
@@ -490,7 +511,7 @@ function resultspack_weather_get_latest_session()
     $result = safe_r_sql(
         "SELECT CrwsId,CrwsTournament,CrwsStationId,CrwsDeviceId," .
         "CrwsStationName,CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
-        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes " .
+        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes,CrwsResearchStatus " .
         "FROM CustomResultsPackWeatherSessions " .
         "ORDER BY CrwsId DESC LIMIT 1"
     );
@@ -517,6 +538,7 @@ function resultspack_weather_get_latest_session()
             ? (float) $row->CrwsSensorHeight
             : null,
         'position_notes' => (string) $row->CrwsPositionNotes,
+        'research_status' => resultspack_weather_research_status((string) $row->CrwsResearchStatus),
     );
 }
 
@@ -580,7 +602,7 @@ function resultspack_weather_get_completed_sessions()
     $result = safe_r_sql(
         "SELECT CrwsId,CrwsTournament,CrwsStationId,CrwsDeviceId," .
         "CrwsStationName,CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
-        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes " .
+        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes,CrwsResearchStatus " .
         "FROM CustomResultsPackWeatherSessions " .
         "WHERE CrwsEndedEpoch IS NOT NULL " .
         "ORDER BY CrwsStartedEpoch DESC"
@@ -607,6 +629,7 @@ function resultspack_weather_get_completed_sessions()
                 ? (float) $row->CrwsSensorHeight
                 : null,
             'position_notes' => (string) $row->CrwsPositionNotes,
+            'research_status' => resultspack_weather_research_status((string) $row->CrwsResearchStatus),
         );
     }
 
@@ -671,6 +694,16 @@ function resultspack_weather_ensure_observations_table()
     );
 
     $done = true;
+}
+
+//Research status (identify tests)
+function resultspack_weather_research_status($value)
+{
+    $allowed = array('real', 'test', 'excluded');
+
+    return in_array($value, $allowed, true)
+        ? $value
+        : 'test';
 }
 
 //Turn a nullable numeric Tempest value into safeSQL.
@@ -1046,4 +1079,127 @@ function resultspack_weather_get_events($sessionId)
     }
 
     return $events;
+}
+
+//Return all weather sessions, newest first.
+function resultspack_weather_get_sessions()
+{
+    resultspack_weather_ensure_sessions_table();
+
+    $result = safe_r_sql(
+        "SELECT CrwsId,CrwsTournament,CrwsStationId,CrwsDeviceId," .
+        "CrwsStationName,CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
+        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes," .
+        "CrwsResearchStatus " .
+        "FROM CustomResultsPackWeatherSessions " .
+        "ORDER BY CrwsStartedEpoch DESC"
+    );
+
+    $sessions = array();
+
+    while ($row = safe_fetch($result)) {
+        $sessions[] = array(
+            'id' => (int) $row->CrwsId,
+            'tournament_id' => (int) $row->CrwsTournament,
+            'station_id' => (int) $row->CrwsStationId,
+            'station_name' => (string) $row->CrwsStationName,
+            'started_epoch' => (int) $row->CrwsStartedEpoch,
+            'ended_epoch' => $row->CrwsEndedEpoch !== null
+                ? (int) $row->CrwsEndedEpoch
+                : null,
+            'timezone' => (string) $row->CrwsTimezone,
+            'shooting_bearing' => $row->CrwsShootingBearing !== null
+                ? (float) $row->CrwsShootingBearing
+                : null,
+            'sensor_height' => $row->CrwsSensorHeight !== null
+                ? (float) $row->CrwsSensorHeight
+                : null,
+            'position_notes' => (string) $row->CrwsPositionNotes,
+            'research_status' => resultspack_weather_research_status(
+                (string) $row->CrwsResearchStatus
+            ),
+        );
+    }
+
+    return $sessions;
+}
+
+//Update the editable setup information for a weather session.
+function resultspack_weather_update_session($sessionId, array $values)
+{
+    resultspack_weather_ensure_sessions_table();
+
+    $sessionId = (int) $sessionId;
+
+    if ($sessionId <= 0) {
+        return array(
+            'ok' => false,
+            'error' => 'Invalid weather session.',
+        );
+    }
+
+    //Shooting bearing must be between 0 and 359 degrees.
+    $bearing = null;
+
+    if (
+        isset($values['shooting_bearing'])
+        && is_numeric($values['shooting_bearing'])
+    ) {
+        $candidate = (float) $values['shooting_bearing'];
+
+        if ($candidate >= 0 && $candidate < 360) {
+            $bearing = $candidate;
+        }
+    }
+
+    //Sensor height must be a sensible positive value.
+    $height = null;
+
+    if (
+        isset($values['sensor_height'])
+        && is_numeric($values['sensor_height'])
+    ) {
+        $candidate = (float) $values['sensor_height'];
+
+        if ($candidate > 0 && $candidate <= 20) {
+            $height = $candidate;
+        }
+    }
+
+    //Tidy and limit the free-text position notes.
+    $notes = trim((string) ($values['position_notes'] ?? ''));
+
+    if (function_exists('mb_substr')) {
+        $notes = mb_substr($notes, 0, 2000, 'UTF-8');
+    } else {
+        $notes = substr($notes, 0, 2000);
+    }
+
+    //Only allow our three recognised research statuses.
+    $status = resultspack_weather_research_status(
+        $values['research_status'] ?? 'test'
+    );
+
+    //Prepare nullable numbers for the SQL query.
+    $bearingSql = $bearing !== null
+        ? number_format($bearing, 1, '.', '')
+        : 'NULL';
+
+    $heightSql = $height !== null
+        ? number_format($height, 2, '.', '')
+        : 'NULL';
+
+    //Update only the editable metadata.
+    safe_w_sql(
+        "UPDATE CustomResultsPackWeatherSessions SET " .
+        "CrwsShootingBearing=" . $bearingSql . "," .
+        "CrwsSensorHeight=" . $heightSql . "," .
+        "CrwsPositionNotes=" . StrSafe_DB($notes) . "," .
+        "CrwsResearchStatus=" . StrSafe_DB($status) . " " .
+        "WHERE CrwsId=" . $sessionId
+    );
+
+    return array(
+        'ok' => true,
+    );
 }

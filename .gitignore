@@ -9,3 +9,7 @@
 
 # VS Code workspace settings
 /.vscode/settings.json
+
+# Temporary weather debugging logs
+/TempestTestDebug.txt
+/WeatherSessionEditDebug.txt

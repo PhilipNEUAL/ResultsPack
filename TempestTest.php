@@ -830,4 +830,158 @@ if (!$completedSessions) {
 
 echo '</table>';
 
+//Weather session history.
+$allWeatherSessions = resultspack_weather_get_sessions();
+
+echo '<br>';
+echo '<table class="Tabella freeWidth">';
+echo '<tr><th class="Main" colspan="8">Weather session history</th></tr>';
+
+if (($_GET['session_updated'] ?? '') === '1') {
+    echo '<tr><td colspan="8" style="color:green"><b>'
+        . 'Weather session details updated.'
+        . '</b></td></tr>';
+}
+
+if (!$allWeatherSessions) {
+    echo '<tr><td colspan="8">No weather sessions recorded yet.</td></tr>';
+} else {
+    echo '<tr>';
+    echo '<th class="Title">ID</th>';
+    echo '<th class="Title">Started</th>';
+    echo '<th class="Title">Session</th>';
+    echo '<th class="Title">Research status</th>';
+    echo '<th class="Title">Bearing</th>';
+    echo '<th class="Title">Height</th>';
+    echo '<th class="Title">Notes</th>';
+    echo '<th class="Title">Edit</th>';
+    echo '</tr>';
+
+    foreach ($allWeatherSessions as $session) {
+        try {
+            $started = new DateTime('@' . $session['started_epoch']);
+            $started->setTimezone(
+                new DateTimeZone($session['timezone'] ?: 'UTC')
+            );
+
+            $startedLabel = $started->format('d/m/Y H:i:s');
+        } catch (Exception $e) {
+            $startedLabel = date(
+                'd/m/Y H:i:s',
+                $session['started_epoch']
+            );
+        }
+
+        $sessionState = $session['ended_epoch'] === null
+            ? 'Active'
+            : 'Completed';
+
+        echo '<tr>';
+
+        echo '<td>'
+            . (int) $session['id']
+            . '</td>';
+
+        echo '<td>'
+            . htmlspecialchars($startedLabel)
+            . '</td>';
+
+        echo '<td>'
+            . htmlspecialchars($sessionState)
+            . '</td>';
+
+        echo '<td>'
+            . htmlspecialchars(ucfirst($session['research_status']))
+            . '</td>';
+
+        echo '<td>'
+            . ($session['shooting_bearing'] !== null
+                ? htmlspecialchars((string) $session['shooting_bearing']) . '°'
+                : 'Not recorded')
+            . '</td>';
+
+        echo '<td>'
+            . ($session['sensor_height'] !== null
+                ? htmlspecialchars((string) $session['sensor_height']) . ' m'
+                : 'Not recorded')
+            . '</td>';
+
+        echo '<td>'
+            . ($session['position_notes'] !== ''
+                ? htmlspecialchars($session['position_notes'])
+                : 'None')
+            . '</td>';
+
+        echo '<td>';
+
+        echo '<form method="post" action="WeatherSessionEditAction.php">';
+
+        echo '<input type="hidden" name="csrf_token" value="'
+            . htmlspecialchars(resultspack_csrf_token())
+            . '">';
+
+        echo '<input type="hidden" name="session_id" value="'
+            . (int) $session['id']
+            . '">';
+
+        echo '<label>Bearing<br>';
+        echo '<input type="number" name="shooting_bearing" min="0" max="359" step="1" value="'
+            . htmlspecialchars((string) ($session['shooting_bearing'] ?? ''))
+            . '">°';
+        echo '</label>';
+
+        echo '<br><br>';
+
+        echo '<label>Height<br>';
+        echo '<input type="number" name="sensor_height" min="0.1" max="20" step="0.01" value="'
+            . htmlspecialchars((string) ($session['sensor_height'] ?? ''))
+            . '"> m';
+        echo '</label>';
+
+        echo '<br><br>';
+
+        echo '<label>Status<br>';
+        echo '<select name="research_status">';
+
+        foreach (
+            array(
+                'real' => 'Real',
+                'test' => 'Test',
+                'excluded' => 'Excluded',
+            )
+            as $value => $label
+        ) {
+            $selected =
+                $session['research_status'] === $value
+                    ? ' selected'
+                    : '';
+
+            echo '<option value="' . $value . '"' . $selected . '>'
+                . $label
+                . '</option>';
+        }
+
+        echo '</select>';
+        echo '</label>';
+
+        echo '<br><br>';
+
+        echo '<label>Notes<br>';
+        echo '<textarea name="position_notes" rows="2">'
+            . htmlspecialchars($session['position_notes'])
+            . '</textarea>';
+        echo '</label>';
+
+        echo '<br>';
+
+        echo '<input type="submit" value="Save changes">';
+
+        echo '</form>';
+
+        echo '</td>';
+
+        echo '</tr>';
+    }
+}
+
 include('Common/Templates/tail.php');

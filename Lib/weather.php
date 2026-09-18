@@ -916,3 +916,134 @@ function resultspack_weather_session_quality($sessionId)
         'last_timestamp' => $timestamps ? end($timestamps) : null,
     );
 }
+
+/**
+ * Create the weather-event table when first needed.
+ */
+function resultspack_weather_ensure_events_table()
+{
+    static $done = false;
+
+    if ($done) {
+        return;
+    }
+
+    safe_w_sql(
+        "CREATE TABLE IF NOT EXISTS CustomResultsPackWeatherEvents (" .
+        "CrweId int unsigned NOT NULL AUTO_INCREMENT," .
+        "CrweSession int unsigned NOT NULL," .
+        "CrweTimestamp bigint unsigned NOT NULL," .
+        "CrweAction varchar(32) NOT NULL," .
+        "CrweReason varchar(64) NOT NULL DEFAULT ''," .
+        "CrweNote text NOT NULL," .
+        "CrweCreated datetime NOT NULL," .
+        "PRIMARY KEY (CrweId)," .
+        "KEY CrweSession (CrweSession)," .
+        "KEY CrweTimestamp (CrweTimestamp)" .
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+
+    $done = true;
+}
+
+//Record a judge/weather event against the active weather session.
+function resultspack_weather_add_event($action, $reason = '', $note = '')
+{
+    resultspack_weather_ensure_events_table();
+
+    $session = resultspack_weather_get_active_session();
+
+    if (!$session) {
+        return array(
+            'ok' => false,
+            'error' => 'There is no active weather session.',
+        );
+    }
+
+    $allowedActions = array(
+        'delay',
+        'suspend',
+        'resume',
+        'abandon',
+    );
+
+    if (!in_array($action, $allowedActions, true)) {
+        return array(
+            'ok' => false,
+            'error' => 'Unknown weather event.',
+        );
+    }
+
+    $allowedReasons = array(
+        '',
+        'wind',
+        'lightning',
+        'rain',
+        'heat',
+        'cold',
+        'visibility',
+        'field_conditions',
+        'equipment',
+        'other',
+    );
+
+    if (!in_array($reason, $allowedReasons, true)) {
+        $reason = 'other';
+    }
+
+    $note = trim((string) $note);
+
+    if (function_exists('mb_substr')) {
+        $note = mb_substr($note, 0, 1000, 'UTF-8');
+    } else {
+        $note = substr($note, 0, 1000);
+    }
+
+    $timestamp = time();
+
+    safe_w_sql(
+        "INSERT INTO CustomResultsPackWeatherEvents (" .
+        "CrweSession,CrweTimestamp,CrweAction,CrweReason,CrweNote,CrweCreated" .
+        ") VALUES (" .
+        (int) $session['id'] . "," .
+        $timestamp . "," .
+        StrSafe_DB($action) . "," .
+        StrSafe_DB($reason) . "," .
+        StrSafe_DB($note) . "," .
+        "NOW())"
+    );
+
+    return array(
+        'ok' => true,
+        'timestamp' => $timestamp,
+    );
+}
+
+//Return recorded judge/weather events for one session.
+function resultspack_weather_get_events($sessionId)
+{
+    resultspack_weather_ensure_events_table();
+
+    $sessionId = (int) $sessionId;
+
+    $result = safe_r_sql(
+        "SELECT CrweId,CrweTimestamp,CrweAction,CrweReason,CrweNote " .
+        "FROM CustomResultsPackWeatherEvents " .
+        "WHERE CrweSession=" . $sessionId . " " .
+        "ORDER BY CrweTimestamp ASC, CrweId ASC"
+    );
+
+    $events = array();
+
+    while ($row = safe_fetch($result)) {
+        $events[] = array(
+            'id' => (int) $row->CrweId,
+            'timestamp' => (int) $row->CrweTimestamp,
+            'action' => (string) $row->CrweAction,
+            'reason' => (string) $row->CrweReason,
+            'note' => (string) $row->CrweNote,
+        );
+    }
+
+    return $events;
+}

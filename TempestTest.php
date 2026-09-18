@@ -358,6 +358,107 @@ if ($summary['configured']) {
                 : 'None')
             . '</td></tr>';
 
+        echo '<tr><td class="Bold">Judge decision log</td><td>';
+
+        echo '<form method="post" action="WeatherEventAction.php">';
+
+        echo '<input type="hidden" name="csrf_token" value="'
+            . htmlspecialchars(resultspack_csrf_token())
+            . '">';
+
+        echo '<div style="margin-bottom:8px">';
+
+        echo '<button type="submit" name="event_action" value="delay">Delay</button> ';
+        echo '<button type="submit" name="event_action" value="suspend">Suspend</button> ';
+        echo '<button type="submit" name="event_action" value="resume">Resume</button> ';
+        echo '<button type="submit" name="event_action" value="abandon">Abandon</button>';
+
+        echo '</div>';
+
+        echo '<label>Reason ';
+        echo '<select name="event_reason">';
+        echo '<option value="">Not specified</option>';
+        echo '<option value="wind">Wind</option>';
+        echo '<option value="lightning">Lightning / thunder</option>';
+        echo '<option value="rain">Rain / flooding</option>';
+        echo '<option value="heat">Heat</option>';
+        echo '<option value="cold">Cold</option>';
+        echo '<option value="visibility">Visibility</option>';
+        echo '<option value="field_conditions">Field conditions</option>';
+        echo '<option value="equipment">Equipment / infrastructure</option>';
+        echo '<option value="other">Other</option>';
+        echo '</select>';
+        echo '</label>';
+
+        echo '<br><br>';
+
+        echo '<label>Optional note<br>';
+        echo '<textarea name="event_note" rows="2" placeholder="For example: repeated strong gusts affecting target stability."></textarea>';
+        echo '</label>';
+
+        echo '</form>';
+
+        echo '</td></tr>';
+
+        $weatherEvents = resultspack_weather_get_events($activeSession['id']);
+
+            if ($weatherEvents) {
+                echo '<tr><td class="Bold">Recorded events</td><td>';
+
+                echo '<table class="Tabella freeWidth">';
+
+                echo '<tr>';
+                echo '<th class="Title">Time</th>';
+                echo '<th class="Title">Action</th>';
+                echo '<th class="Title">Reason</th>';
+                echo '<th class="Title">Note</th>';
+                echo '</tr>';
+
+                foreach ($weatherEvents as $event) {
+                    try {
+                        $eventTime = new DateTime('@' . $event['timestamp']);
+                        $eventTime->setTimezone(
+                            new DateTimeZone($activeSession['timezone'] ?: 'UTC')
+                        );
+
+                        $eventTimeLabel = $eventTime->format('H:i:s');
+                    } catch (Exception $e) {
+                        $eventTimeLabel = date(
+                            'H:i:s',
+                            $event['timestamp']
+                        );
+                    }
+
+                    echo '<tr>';
+
+                    echo '<td>'
+                        . htmlspecialchars($eventTimeLabel)
+                        . '</td>';
+
+                    echo '<td>'
+                        . htmlspecialchars(ucfirst($event['action']))
+                        . '</td>';
+
+                    echo '<td>'
+                        . htmlspecialchars(
+                            $event['reason'] !== ''
+                                ? ucwords(str_replace('_', ' ', $event['reason']))
+                                : 'Not specified'
+                        )
+                        . '</td>';
+
+                    echo '<td>'
+                        . htmlspecialchars($event['note'])
+                        . '</td>';
+
+                    echo '</tr>';
+                }
+
+                echo '</table>';
+
+                echo '</td></tr>';
+            }
+
         echo '<tr><td colspan="2">';
 
         echo '<form method="post" action="WeatherSessionAction.php" style="margin:0">';

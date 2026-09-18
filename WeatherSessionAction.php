@@ -16,13 +16,58 @@ if (!resultspack_validate_csrf($_POST['csrf_token'] ?? '')) {
 $action = (string) ($_POST['weather_action'] ?? '');
 
 if ($action === 'stop') {
+    //First stop the session. This succeeds independently of the Tempest import. I want to avoid a temporary API/internet failure to prevent the session closing.
     $result = resultspack_weather_stop_session();
 
     if (!$result['ok']) {
         exit(htmlspecialchars($result['error']));
     }
 
-    header('Location: TempestTest.php?session=stopped');
+    $sessionId = (int) ($result['session_id'] ?? 0);
+
+    //Now try to archive the historical Tempest observations.
+    $importResult = resultspack_weather_import_session_observations(
+        $sessionId
+    );
+
+    $redirect =
+        'TempestTest.php?session=stopped'
+        . '&history_session_id=' . $sessionId;
+
+    if ($importResult['ok']) {
+        $redirect .=
+            '&auto_import=ok'
+            . '&received=' . (int) ($importResult['received'] ?? 0)
+            . '&added=' . (int) ($importResult['added'] ?? 0);
+
+        //Calculate the quality result after importing.
+        $quality = resultspack_weather_session_quality($sessionId);
+
+        if (
+            $quality
+            && $quality['coverage_percent'] !== null
+        ) {
+            $redirect .=
+                '&coverage='
+                . rawurlencode(
+                    number_format(
+                        $quality['coverage_percent'],
+                        1,
+                        '.',
+                        ''
+                    )
+                );
+        }
+    } else {
+        $redirect .=
+            '&auto_import=failed'
+            . '&import_error='
+            . rawurlencode(
+                $importResult['error'] ?? 'Unknown import error'
+            );
+    }
+
+    header('Location: ' . $redirect);
     exit;
 }
 
@@ -65,7 +110,10 @@ $observationResponse = resultspack_weather_fetch_latest_observation($stationId);
 if ($observationResponse['ok']) {
     $observationData = $observationResponse['data'];
 
-    $timezone = (string) ($observationData['timezone'] ?? 'UTC');
+    $timezone = (string) (
+        $observationData['timezone']
+        ?? resultspack_weather_timezone()
+    );
 
     $fields = $observationData['ob_fields'] ?? array();
     $values = $observationData['obs'][0] ?? array();

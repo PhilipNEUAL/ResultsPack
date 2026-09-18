@@ -45,6 +45,54 @@ function resultspack_weather_config_summary()
     );
 }
 
+//Return the configured timezone for weather sessions.
+function resultspack_weather_timezone()
+{
+    $config = resultspack_weather_config();
+
+    $timezone = trim(
+        (string) ($config['timezone'] ?? 'UTC')
+    );
+
+    if ($timezone === '') {
+        return 'UTC';
+    }
+
+    try {
+        new DateTimeZone($timezone);
+        return $timezone;
+    } catch (Exception $e) {
+        return 'UTC';
+    }
+}
+
+//Format a Unix timestamp in the requested weather-session timezone.
+function resultspack_weather_format_timestamp(
+    $timestamp,
+    $timezone = null,
+    $format = 'Y-m-d H:i:s'
+) {
+    if (!is_numeric($timestamp)) {
+        return 'Not available';
+    }
+
+    if ($timezone === null || trim((string) $timezone) === '') {
+        $timezone = resultspack_weather_timezone();
+    }
+
+    try {
+        $tz = new DateTimeZone((string) $timezone);
+    } catch (Exception $e) {
+        $tz = new DateTimeZone('UTC');
+    }
+
+    $date = new DateTimeImmutable('@' . (int) $timestamp);
+
+    return $date
+        ->setTimezone($tz)
+        ->format($format);
+}
+
 //Make a request to the Tempest REST API.
 function resultspack_weather_api_request($path, $query = array())
 {
@@ -499,6 +547,7 @@ function resultspack_weather_stop_session()
 
     return array(
         'ok' => true,
+        'session_id' => (int) $session['id'],
         'ended_epoch' => $ended,
     );
 }
@@ -723,10 +772,26 @@ function resultspack_weather_count_observations($sessionId)
 
     $sessionId = (int) $sessionId;
 
+    if ($sessionId <= 0) {
+        return 0;
+    }
+
+    //Count only observations inside the session's current research window.
+    //Rows from an older, wider window are retained for audit/reversibility.
+    $session = resultspack_weather_get_completed_session($sessionId);
+
+    $where = "CrwoSession=" . $sessionId;
+
+    if ($session) {
+        $where .=
+            " AND CrwoTimestamp>=" . (int) $session['started_epoch'] .
+            " AND CrwoTimestamp<=" . (int) $session['ended_epoch'];
+    }
+
     $result = safe_r_sql(
         "SELECT COUNT(*) AS ObservationCount " .
         "FROM CustomResultsPackWeatherObservations " .
-        "WHERE CrwoSession=" . $sessionId
+        "WHERE " . $where
     );
 
     $row = safe_fetch($result);
@@ -840,10 +905,24 @@ function resultspack_weather_get_observation_timestamps($sessionId)
 
     $sessionId = (int) $sessionId;
 
+    if ($sessionId <= 0) {
+        return array();
+    }
+
+    $session = resultspack_weather_get_completed_session($sessionId);
+
+    $where = "CrwoSession=" . $sessionId;
+
+    if ($session) {
+        $where .=
+            " AND CrwoTimestamp>=" . (int) $session['started_epoch'] .
+            " AND CrwoTimestamp<=" . (int) $session['ended_epoch'];
+    }
+
     $result = safe_r_sql(
         "SELECT CrwoTimestamp " .
         "FROM CustomResultsPackWeatherObservations " .
-        "WHERE CrwoSession=" . $sessionId . " " .
+        "WHERE " . $where . " " .
         "ORDER BY CrwoTimestamp ASC"
     );
 
@@ -1081,6 +1160,238 @@ function resultspack_weather_get_events($sessionId)
     return $events;
 }
 
+//Create the timing-correction audit table when first needed.
+function resultspack_weather_ensure_timing_corrections_table()
+{
+    static $done = false;
+
+    if ($done) {
+        return;
+    }
+
+    safe_w_sql(
+        "CREATE TABLE IF NOT EXISTS CustomResultsPackWeatherTimingCorrections (" .
+        "CrwtcId int unsigned NOT NULL AUTO_INCREMENT," .
+        "CrwtcSession int unsigned NOT NULL," .
+        "CrwtcOldStartedEpoch bigint unsigned NOT NULL," .
+        "CrwtcOldEndedEpoch bigint unsigned NOT NULL," .
+        "CrwtcNewStartedEpoch bigint unsigned NOT NULL," .
+        "CrwtcNewEndedEpoch bigint unsigned NOT NULL," .
+        "CrwtcTimezone varchar(64) NOT NULL DEFAULT 'UTC'," .
+        "CrwtcReason text NOT NULL," .
+        "CrwtcCreated datetime NOT NULL," .
+        "PRIMARY KEY (CrwtcId)," .
+        "KEY CrwtcSession (CrwtcSession)," .
+        "KEY CrwtcCreated (CrwtcCreated)" .
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+
+    $done = true;
+}
+
+//Turn an HTML datetime-local value into a Unix timestamp in a named timezone.
+function resultspack_weather_parse_local_datetime($value, $timezone)
+{
+    $value = trim((string) $value);
+    $timezone = trim((string) $timezone);
+
+    if ($value === '') {
+        return null;
+    }
+
+    if ($timezone === '') {
+        $timezone = resultspack_weather_timezone();
+    }
+
+    try {
+        $tz = new DateTimeZone($timezone);
+    } catch (Exception $e) {
+        return null;
+    }
+
+    foreach (array('Y-m-d\\TH:i:s', 'Y-m-d\\TH:i') as $format) {
+        $date = DateTimeImmutable::createFromFormat('!' . $format, $value, $tz);
+        $errors = DateTimeImmutable::getLastErrors();
+
+        if (
+            $date
+            && ($errors === false || (
+                (int) ($errors['warning_count'] ?? 0) === 0
+                && (int) ($errors['error_count'] ?? 0) === 0
+            ))
+            && $date->format($format) === $value
+        ) {
+            return $date->getTimestamp();
+        }
+    }
+
+    return null;
+}
+
+//Correct the start/end of a completed weather session while preserving an audit trail.
+function resultspack_weather_update_session_timing(
+    $sessionId,
+    $startLocal,
+    $endLocal,
+    $reason
+) {
+    resultspack_weather_ensure_sessions_table();
+    resultspack_weather_ensure_timing_corrections_table();
+
+    $sessionId = (int) $sessionId;
+
+    $session = resultspack_weather_get_completed_session($sessionId);
+
+    if (!$session) {
+        return array(
+            'ok' => false,
+            'error' => 'Completed weather session not found.',
+        );
+    }
+
+    $reason = trim((string) $reason);
+
+    if ($reason === '') {
+        return array(
+            'ok' => false,
+            'error' => 'Please record why the session timing is being corrected.',
+        );
+    }
+
+    if (function_exists('mb_substr')) {
+        $reason = mb_substr($reason, 0, 2000, 'UTF-8');
+    } else {
+        $reason = substr($reason, 0, 2000);
+    }
+
+    $timezone = trim((string) ($session['timezone'] ?? ''));
+
+    if ($timezone === '') {
+        $timezone = resultspack_weather_timezone();
+    }
+
+    $newStarted = resultspack_weather_parse_local_datetime(
+        $startLocal,
+        $timezone
+    );
+
+    $newEnded = resultspack_weather_parse_local_datetime(
+        $endLocal,
+        $timezone
+    );
+
+    if ($newStarted === null || $newEnded === null) {
+        return array(
+            'ok' => false,
+            'error' => 'The corrected start or end time could not be understood.',
+        );
+    }
+
+    if ($newEnded <= $newStarted) {
+        return array(
+            'ok' => false,
+            'error' => 'The corrected end time must be after the corrected start time.',
+        );
+    }
+
+    //A completed research window should not extend into the future.
+    if ($newStarted > time() + 300 || $newEnded > time() + 300) {
+        return array(
+            'ok' => false,
+            'error' => 'The corrected session times cannot be in the future.',
+        );
+    }
+
+    $oldStarted = (int) $session['started_epoch'];
+    $oldEnded = (int) $session['ended_epoch'];
+
+    if ($newStarted === $oldStarted && $newEnded === $oldEnded) {
+        return array(
+            'ok' => true,
+            'changed' => false,
+            'session_id' => $sessionId,
+            'started_epoch' => $newStarted,
+            'ended_epoch' => $newEnded,
+            'timezone' => $timezone,
+        );
+    }
+
+    //Record the old and new values before changing the session itself.
+    safe_w_sql(
+        "INSERT INTO CustomResultsPackWeatherTimingCorrections (" .
+        "CrwtcSession,CrwtcOldStartedEpoch,CrwtcOldEndedEpoch," .
+        "CrwtcNewStartedEpoch,CrwtcNewEndedEpoch,CrwtcTimezone," .
+        "CrwtcReason,CrwtcCreated" .
+        ") VALUES (" .
+        $sessionId . "," .
+        $oldStarted . "," .
+        $oldEnded . "," .
+        $newStarted . "," .
+        $newEnded . "," .
+        StrSafe_DB($timezone) . "," .
+        StrSafe_DB($reason) . "," .
+        "NOW())"
+    );
+
+    safe_w_sql(
+        "UPDATE CustomResultsPackWeatherSessions SET " .
+        "CrwsStartedEpoch=" . $newStarted . "," .
+        "CrwsEndedEpoch=" . $newEnded . " " .
+        "WHERE CrwsId=" . $sessionId . " " .
+        "AND CrwsEndedEpoch IS NOT NULL"
+    );
+
+    return array(
+        'ok' => true,
+        'changed' => true,
+        'session_id' => $sessionId,
+        'old_started_epoch' => $oldStarted,
+        'old_ended_epoch' => $oldEnded,
+        'started_epoch' => $newStarted,
+        'ended_epoch' => $newEnded,
+        'timezone' => $timezone,
+    );
+}
+
+//Return timing corrections for one weather session, newest first.
+function resultspack_weather_get_timing_corrections($sessionId)
+{
+    resultspack_weather_ensure_timing_corrections_table();
+
+    $sessionId = (int) $sessionId;
+
+    if ($sessionId <= 0) {
+        return array();
+    }
+
+    $result = safe_r_sql(
+        "SELECT CrwtcId,CrwtcSession,CrwtcOldStartedEpoch,CrwtcOldEndedEpoch," .
+        "CrwtcNewStartedEpoch,CrwtcNewEndedEpoch,CrwtcTimezone," .
+        "CrwtcReason,CrwtcCreated " .
+        "FROM CustomResultsPackWeatherTimingCorrections " .
+        "WHERE CrwtcSession=" . $sessionId . " " .
+        "ORDER BY CrwtcId DESC"
+    );
+
+    $corrections = array();
+
+    while ($row = safe_fetch($result)) {
+        $corrections[] = array(
+            'id' => (int) $row->CrwtcId,
+            'session_id' => (int) $row->CrwtcSession,
+            'old_started_epoch' => (int) $row->CrwtcOldStartedEpoch,
+            'old_ended_epoch' => (int) $row->CrwtcOldEndedEpoch,
+            'new_started_epoch' => (int) $row->CrwtcNewStartedEpoch,
+            'new_ended_epoch' => (int) $row->CrwtcNewEndedEpoch,
+            'timezone' => (string) $row->CrwtcTimezone,
+            'reason' => (string) $row->CrwtcReason,
+            'created' => (string) $row->CrwtcCreated,
+        );
+    }
+
+    return $corrections;
+}
+
 //Return all weather sessions, newest first.
 function resultspack_weather_get_sessions()
 {
@@ -1202,4 +1513,117 @@ function resultspack_weather_update_session($sessionId, array $values)
     return array(
         'ok' => true,
     );
+}
+
+//Return all locally stored observations for one weather session.
+function resultspack_weather_get_observations($sessionId)
+{
+    resultspack_weather_ensure_observations_table();
+
+    $sessionId = (int) $sessionId;
+
+    if ($sessionId <= 0) {
+        return array();
+    }
+
+    $session = resultspack_weather_get_completed_session($sessionId);
+
+    $where = "CrwoSession=" . $sessionId;
+
+    if ($session) {
+        $where .=
+            " AND CrwoTimestamp>=" . (int) $session['started_epoch'] .
+            " AND CrwoTimestamp<=" . (int) $session['ended_epoch'];
+    }
+
+    $result = safe_r_sql(
+        "SELECT " .
+        "CrwoTimestamp,CrwoReportInterval," .
+        "CrwoWindLull,CrwoWindAvg,CrwoWindGust,CrwoWindDir," .
+        "CrwoStationPressure,CrwoSeaLevelPressure," .
+        "CrwoAirTemp,CrwoRh," .
+        "CrwoIlluminance,CrwoUv,CrwoSolarRadiation," .
+        "CrwoPrecipAccumulation,CrwoLocalDayPrecipAccumulation," .
+        "CrwoPrecipType,CrwoStrikeCount,CrwoStrikeDistance " .
+        "FROM CustomResultsPackWeatherObservations " .
+        "WHERE " . $where . " " .
+        "ORDER BY CrwoTimestamp ASC"
+    );
+
+    $observations = array();
+
+    while ($row = safe_fetch($result)) {
+        $observations[] = array(
+            'timestamp' => (int) $row->CrwoTimestamp,
+            'report_interval' => $row->CrwoReportInterval !== null
+                ? (int) $row->CrwoReportInterval
+                : null,
+
+            'wind_lull' => $row->CrwoWindLull !== null
+                ? (float) $row->CrwoWindLull
+                : null,
+
+            'wind_avg' => $row->CrwoWindAvg !== null
+                ? (float) $row->CrwoWindAvg
+                : null,
+
+            'wind_gust' => $row->CrwoWindGust !== null
+                ? (float) $row->CrwoWindGust
+                : null,
+
+            'wind_dir' => $row->CrwoWindDir !== null
+                ? (float) $row->CrwoWindDir
+                : null,
+
+            'station_pressure' => $row->CrwoStationPressure !== null
+                ? (float) $row->CrwoStationPressure
+                : null,
+
+            'sea_level_pressure' => $row->CrwoSeaLevelPressure !== null
+                ? (float) $row->CrwoSeaLevelPressure
+                : null,
+
+            'air_temp' => $row->CrwoAirTemp !== null
+                ? (float) $row->CrwoAirTemp
+                : null,
+
+            'humidity' => $row->CrwoRh !== null
+                ? (float) $row->CrwoRh
+                : null,
+
+            'illuminance' => $row->CrwoIlluminance !== null
+                ? (float) $row->CrwoIlluminance
+                : null,
+
+            'uv' => $row->CrwoUv !== null
+                ? (float) $row->CrwoUv
+                : null,
+
+            'solar_radiation' => $row->CrwoSolarRadiation !== null
+                ? (float) $row->CrwoSolarRadiation
+                : null,
+
+            'precip_accumulation' => $row->CrwoPrecipAccumulation !== null
+                ? (float) $row->CrwoPrecipAccumulation
+                : null,
+
+            'local_day_precip' => $row->CrwoLocalDayPrecipAccumulation !== null
+                ? (float) $row->CrwoLocalDayPrecipAccumulation
+                : null,
+
+            'precip_type' => $row->CrwoPrecipType !== null
+                ? (int) $row->CrwoPrecipType
+                : null,
+
+            'strike_count' => $row->CrwoStrikeCount !== null
+                ? (int) $row->CrwoStrikeCount
+                : null,
+
+            'strike_distance' => $row->CrwoStrikeDistance !== null
+                ? (float) $row->CrwoStrikeDistance
+                : null,
+        );
+    }
+
+    return $observations;
 }

@@ -300,8 +300,54 @@ if ($summary['configured']) {
     if (($_GET['session'] ?? '') === 'started') {
         echo '<tr><td colspan="2" style="color:green"><b>Weather session started.</b></td></tr>';
     } elseif (($_GET['session'] ?? '') === 'stopped') {
-        echo '<tr><td colspan="2" style="color:green"><b>Weather session stopped.</b></td></tr>';
+        echo '<tr><td colspan="2" style="color:green">';
+        echo '<b>Weather session stopped.</b>';
+
+        if (($_GET['auto_import'] ?? '') === 'ok') {
+            $received = (int) ($_GET['received'] ?? 0);
+            $added = (int) ($_GET['added'] ?? 0);
+            $coverage = $_GET['coverage'] ?? null;
+
+            echo ' Tempest history imported automatically: '
+                . $received . ' observation'
+                . ($received === 1 ? '' : 's')
+                . ' received, '
+                . $added . ' new observation'
+                . ($added === 1 ? '' : 's')
+                . ' stored.';
+
+            if ($coverage !== null) {
+                $coverageNumber = (float) $coverage;
+
+                if ($coverageNumber >= 100) {
+                    echo ' Data coverage: '
+                        . htmlspecialchars((string) $coverage)
+                        . '%.';
+                } else {
+                    echo ' Data coverage currently: '
+                        . htmlspecialchars((string) $coverage)
+                        . '%. The newest Tempest observation may still be pending; '
+                        . 'the manual import can safely be retried shortly.';
+                }
+            }
+        }
+
+        echo '</td></tr>';
+
+        if (($_GET['auto_import'] ?? '') === 'failed') {
+            echo '<tr><td colspan="2" style="background:#fff3cd">';
+            echo '<b>Automatic weather import failed.</b> ';
+            echo 'The session itself was stopped safely. ';
+
+            echo htmlspecialchars(
+                (string) ($_GET['import_error'] ?? 'Unknown import error.')
+            );
+
+            echo ' You can retry the import later from the historical-session section.';
+            echo '</td></tr>';
+        }
     }
+}
 
     if ($activeSession) {
         $tournamentName = 'Competition ' . $activeSession['tournament_id'];
@@ -573,7 +619,7 @@ if ($summary['configured']) {
     }
 
     echo '</table>';
-}
+
 
 //Temporary historical-observation test. Choose a completed weather session and retrieve its observations from Tempest.
 $completedSessions = resultspack_weather_get_completed_sessions();
@@ -795,9 +841,10 @@ if (!$completedSessions) {
                 if (!empty($firstObservation['timestamp'])) {
                     echo '<tr><td class="Bold">First observation</td><td>'
                         . htmlspecialchars(
-                            date(
-                                'Y-m-d H:i:s',
-                                (int) $firstObservation['timestamp']
+                            resultspack_weather_format_timestamp(
+                                $firstObservation['timestamp'],
+                                $selectedHistorySession['timezone'],
+                                'Y-m-d H:i:s T'
                             )
                         )
                         . '</td></tr>';
@@ -806,13 +853,15 @@ if (!$completedSessions) {
                 if (!empty($lastObservation['timestamp'])) {
                     echo '<tr><td class="Bold">Last observation</td><td>'
                         . htmlspecialchars(
-                            date(
-                                'Y-m-d H:i:s',
-                                (int) $lastObservation['timestamp']
+                            resultspack_weather_format_timestamp(
+                                $lastObservation['timestamp'],
+                                $selectedHistorySession['timezone'],
+                                'Y-m-d H:i:s T'
                             )
                         )
                         . '</td></tr>';
-                }
+}
+
             } else {
                 echo '<tr><td colspan="2">'
                     . '<b>No observations fell inside this session window.</b> '
@@ -835,16 +884,16 @@ $allWeatherSessions = resultspack_weather_get_sessions();
 
 echo '<br>';
 echo '<table class="Tabella freeWidth">';
-echo '<tr><th class="Main" colspan="8">Weather session history</th></tr>';
+echo '<tr><th class="Main" colspan="9">Weather session history</th></tr>';
 
 if (($_GET['session_updated'] ?? '') === '1') {
-    echo '<tr><td colspan="8" style="color:green"><b>'
+    echo '<tr><td colspan="9" style="color:green"><b>'
         . 'Weather session details updated.'
         . '</b></td></tr>';
 }
 
 if (!$allWeatherSessions) {
-    echo '<tr><td colspan="8">No weather sessions recorded yet.</td></tr>';
+    echo '<tr><td colspan="9">No weather sessions recorded yet.</td></tr>';
 } else {
     echo '<tr>';
     echo '<th class="Title">ID</th>';
@@ -854,6 +903,7 @@ if (!$allWeatherSessions) {
     echo '<th class="Title">Bearing</th>';
     echo '<th class="Title">Height</th>';
     echo '<th class="Title">Notes</th>';
+    echo '<th class="Title">View data</th>';
     echo '<th class="Title">Edit</th>';
     echo '</tr>';
 
@@ -911,7 +961,18 @@ if (!$allWeatherSessions) {
                 ? htmlspecialchars($session['position_notes'])
                 : 'None')
             . '</td>';
+        echo '<td>';
 
+            if ($session['ended_epoch'] !== null) {
+                echo '<a href="WeatherSessionView.php?session_id='
+                    . (int) $session['id']
+                    . '">View data</a>';
+            } else {
+                echo '<span class="resultspack-muted">Session active</span>';
+            }
+
+        echo '</td>';
+        
         echo '<td>';
 
         echo '<form method="post" action="WeatherSessionEditAction.php">';

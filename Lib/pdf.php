@@ -333,6 +333,133 @@ $pdf->SetY(max($pdf->GetY() + 1.5, $logoY + $logoHeight + 1));
 
 $pdf->SetFont($pdf->FontStd, 'B', 24);
 $pdf->MultiCell($width, 10, $settings['document_title'], 0, 'C', 0, 1);
+
+$pdf->Ln(5);
+
+$palette = resultspack_pdf_cover_palette($pdf->ResultsPackTableColour, 0);
+$pdf->SetFillColor($palette['main'][0], $palette['main'][1], $palette['main'][2]);
+
+if (resultspack_pdf_palette_key($pdf->ResultsPackTableColour) === 'rainbow') {
+    $text = $palette['text'];
+    $pdf->SetTextColor($text[0], $text[1], $text[2]);
+} else {
+    $pdf->SetTextColor(255, 255, 255);
+}
+
+$pdf->SetFont($pdf->FontStd, 'B', 9);
+$pdf->Cell($width, 6, 'Results sheet information', 0, 1, 'L', 1);
+$pdf->SetDefaultColor();
+$pdf->Ln(1.5);
+
+$items = array(
+    'a' => array('Name of event', $settings['event_name']),
+    'b' => array('Date(s) of event', $settings['date']),
+    'c' => array('Record status', $settings['status']),
+    'd' => array('Venue', $settings['venue']),
+    'e' => array('Tournament organiser', $settings['organiser']),
+    'f' => array('Weather conditions', $settings['weather']),
+    'g' => array("Tabular list of each archer's performance", $settings['individual_note']),
+    'h' => array('Archers who entered but did not shoot', $settings['did_not_shoot']),
+    'i' => array('Disqualified archers', $settings['disqualifications']),
+    'j' => array('Abnormal occurrences affecting the entire shoot', $settings['circumstances']),
+);
+
+$coverColourIndex = 0;
+
+foreach ($items as $letter => $item) {
+    if ($letter === 'h' && empty($settings['include_dns_cover_row'])) {
+        continue;
+    }
+
+    resultspack_pdf_cover_item(
+        $pdf,
+        $letter,
+        $item[0],
+        $item[1],
+        $width,
+        $coverColourIndex
+    );
+
+    $coverColourIndex++;
+}
+
+$ceremonial = array();
+
+if (
+    !empty($settings['include_lady_paramount'])
+    && resultspack_normalise_whitespace($settings['lady_paramount']) !== ''
+) {
+    $ceremonial[] = 'Lady Paramount: ' . $settings['lady_paramount'];
+}
+
+if (
+    !empty($settings['include_lord_patron'])
+    && resultspack_normalise_whitespace($settings['lord_patron']) !== ''
+) {
+    $ceremonial[] = 'Lord Patron: ' . $settings['lord_patron'];
+}
+
+if ($ceremonial) {
+    resultspack_pdf_cover_item(
+        $pdf,
+        'k',
+        'Ceremonial roles',
+        implode("\n", $ceremonial),
+        $width,
+        $coverColourIndex
+    );
+}
+
+$footerTop = $pdf->resultsPackFooterTop();
+
+$publicationLines = array();
+
+$customFooter = resultspack_normalise_whitespace(
+    $settings['cover_footer'] ?? ''
+);
+
+if ($customFooter !== '') {
+    $publicationLines[] = array($customFooter, '');
+}
+
+$revisionNote = resultspack_normalise_whitespace(
+    $settings['revision_note'] ?? ''
+);
+
+if ($revisionNote !== '') {
+    $publicationLines[] = array(
+        'Revision note: ' . $revisionNote,
+        ''
+    );
+}
+
+$issueLabel = resultspack_normalise_whitespace(
+    $settings['issue_label'] ?? ''
+);
+
+if ($issueLabel !== '') {
+    $publicationLines[] = array($issueLabel, 'B');
+}
+
+$publicationLines[] = array('Results powered by I@NSEO', '');
+
+$lineHeight = 4.5;
+$blockHeight = count($publicationLines) * $lineHeight;
+
+$pdf->SetY($footerTop - $blockHeight - 2.5);
+
+foreach ($publicationLines as $line) {
+    $pdf->SetFont($pdf->FontStd, $line[1], 8.5);
+    $pdf->MultiCell(
+        $width,
+        $lineHeight,
+        $line[0],
+        0,
+        'C',
+        0,
+        1
+    );
+}
 }
 
 function resultspack_pdf_individual_layout(array $tournaments, array $distanceIndices = array())

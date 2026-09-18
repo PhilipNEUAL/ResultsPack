@@ -472,4 +472,194 @@ if ($summary['configured']) {
     echo '</table>';
 }
 
+//Temporary historical-observation test. Choose a completed weather session and retrieve its observations from Tempest.
+$completedSessions = resultspack_weather_get_completed_sessions();
+
+echo '<br>';
+echo '<table class="Tabella freeWidth">';
+echo '<tr><th class="Main" colspan="2">Historical observation test</th></tr>';
+
+if (!$completedSessions) {
+    echo '<tr><td colspan="2">No completed weather sessions are available yet.</td></tr>';
+} else {
+    $selectedHistorySessionId = isset($_GET['history_session_id'])
+        ? (int) $_GET['history_session_id']
+        : 0;
+
+    $selectedHistorySession = null;
+
+    if ($selectedHistorySessionId > 0) {
+        $selectedHistorySession =
+            resultspack_weather_get_completed_session($selectedHistorySessionId);
+    }
+
+    echo '<tr>';
+    echo '<td class="Bold">Completed session</td>';
+    echo '<td>';
+
+    echo '<form method="get" action="TempestTest.php" style="margin:0">';
+    echo '<select name="history_session_id">';
+    echo '<option value="">Choose completed session...</option>';
+
+    $tournamentListForHistory = resultspack_fetch_tournament_list();
+
+    foreach ($completedSessions as $session) {
+        $competitionName = 'Competition ' . $session['tournament_id'];
+
+        foreach ($tournamentListForHistory as $tournament) {
+            if ((int) $tournament['id'] === (int) $session['tournament_id']) {
+                $competitionName =
+                    ($tournament['code'] !== ''
+                        ? $tournament['code'] . ' — '
+                        : '')
+                    . $tournament['name'];
+                break;
+            }
+        }
+
+        try {
+            $sessionStart = new DateTime('@' . $session['started_epoch']);
+            $sessionStart->setTimezone(
+                new DateTimeZone($session['timezone'] ?: 'UTC')
+            );
+
+            $startLabel = $sessionStart->format('d/m/Y H:i:s');
+        } catch (Exception $e) {
+            $startLabel = date(
+                'd/m/Y H:i:s',
+                $session['started_epoch']
+            );
+        }
+
+        $durationSeconds =
+            max(0, $session['ended_epoch'] - $session['started_epoch']);
+
+        $durationMinutes = round($durationSeconds / 60, 1);
+
+        $label =
+            '#' . $session['id']
+            . ' — ' . $competitionName
+            . ' — ' . $startLabel
+            . ' — ' . $durationMinutes . ' min';
+
+        $selected =
+            ((int) $session['id'] === $selectedHistorySessionId)
+                ? ' selected'
+                : '';
+
+        echo '<option value="' . (int) $session['id'] . '"' . $selected . '>'
+            . htmlspecialchars($label)
+            . '</option>';
+    }
+
+    echo '</select> ';
+    echo '<input type="submit" value="Load historical observations">';
+    echo '</form>';
+
+    echo '</td>';
+    echo '</tr>';
+
+    if ($selectedHistorySession) {
+        $durationSeconds =
+            max(
+                0,
+                $selectedHistorySession['ended_epoch']
+                - $selectedHistorySession['started_epoch']
+            );
+
+        echo '<tr><td class="Bold">Session ID</td><td>'
+            . (int) $selectedHistorySession['id']
+            . '</td></tr>';
+
+        echo '<tr><td class="Bold">Station</td><td>'
+            . htmlspecialchars($selectedHistorySession['station_name'])
+            . ' (' . (int) $selectedHistorySession['station_id'] . ')'
+            . '</td></tr>';
+
+        echo '<tr><td class="Bold">Session duration</td><td>'
+            . htmlspecialchars(
+                number_format($durationSeconds / 60, 1)
+            )
+            . ' minutes</td></tr>';
+
+        $historyResponse = resultspack_weather_fetch_observations(
+            $selectedHistorySession['station_id'],
+            $selectedHistorySession['started_epoch'],
+            $selectedHistorySession['ended_epoch']
+        );
+
+        if (!$historyResponse['ok']) {
+            echo '<tr><td colspan="2"><b>Historical request failed:</b> '
+                . htmlspecialchars($historyResponse['error'])
+                . '</td></tr>';
+        } else {
+            $historyData = $historyResponse['data'];
+
+            $historyFields = $historyData['ob_fields'] ?? array();
+            $historyRows = $historyData['obs'] ?? array();
+
+            echo '<tr><td class="Bold">Fields returned</td><td>'
+                . htmlspecialchars((string) count($historyFields))
+                . '</td></tr>';
+
+            echo '<tr><td class="Bold">Observations returned</td><td>'
+                . htmlspecialchars((string) count($historyRows))
+                . '</td></tr>';
+
+            if ($historyRows) {
+                $firstValues = reset($historyRows);
+                $lastValues = end($historyRows);
+
+                $firstObservation = array();
+                $lastObservation = array();
+
+                if (
+                    count($historyFields) === count($firstValues)
+                    && count($historyFields) === count($lastValues)
+                ) {
+                    $firstObservation =
+                        array_combine($historyFields, $firstValues);
+
+                    $lastObservation =
+                        array_combine($historyFields, $lastValues);
+                }
+
+                if (!empty($firstObservation['timestamp'])) {
+                    echo '<tr><td class="Bold">First observation</td><td>'
+                        . htmlspecialchars(
+                            date(
+                                'Y-m-d H:i:s',
+                                (int) $firstObservation['timestamp']
+                            )
+                        )
+                        . '</td></tr>';
+                }
+
+                if (!empty($lastObservation['timestamp'])) {
+                    echo '<tr><td class="Bold">Last observation</td><td>'
+                        . htmlspecialchars(
+                            date(
+                                'Y-m-d H:i:s',
+                                (int) $lastObservation['timestamp']
+                            )
+                        )
+                        . '</td></tr>';
+                }
+            } else {
+                echo '<tr><td colspan="2">'
+                    . '<b>No observations fell inside this session window.</b> '
+                    . 'Try a longer completed session.'
+                    . '</td></tr>';
+            }
+        }
+    } else {
+        echo '<tr><td colspan="2">'
+            . 'Choose one of the completed sessions above to test its '
+            . 'historical Tempest data.'
+            . '</td></tr>';
+    }
+}
+
+echo '</table>';
+
 include('Common/Templates/tail.php');

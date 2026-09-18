@@ -145,6 +145,48 @@ function resultspack_weather_fetch_latest_observation($stationId)
     );
 }
 
+//Fetch historical one-minute observations for a Tempest station. Times are Unix timestamps in UTC.
+function resultspack_weather_fetch_observations($stationId, $startEpoch, $endEpoch)
+{
+    if (empty($stationId)) {
+        return array(
+            'ok' => false,
+            'error' => 'No Tempest station ID was supplied.',
+        );
+    }
+
+    $startEpoch = (int) $startEpoch;
+    $endEpoch = (int) $endEpoch;
+
+    if ($startEpoch <= 0 || $endEpoch <= 0) {
+        return array(
+            'ok' => false,
+            'error' => 'Invalid weather observation time range.',
+        );
+    }
+
+    if ($endEpoch <= $startEpoch) {
+        return array(
+            'ok' => false,
+            'error' => 'Weather observation end time must be after the start time.',
+        );
+    }
+
+    return resultspack_weather_api_request(
+        'observations/stn/' . rawurlencode((string) $stationId),
+        array(
+            'time_start' => $startEpoch,
+            'time_end' => $endEpoch,
+            'bucket' => 1,
+            'units_temp' => 'c',
+            'units_wind' => 'mph',
+            'units_pressure' => 'mb',
+            'units_precip' => 'mm',
+            'units_distance' => 'km',
+        )
+    );
+}
+
 //Format numeric weather value for display.
 function resultspack_weather_format_number($value, $decimals = 1)
 {
@@ -528,4 +570,63 @@ function resultspack_weather_freshness($timestamp, $reportInterval = 1)
         'age_text' => resultspack_weather_observation_age($timestamp),
         'report_interval_minutes' => $reportInterval,
     );
+}
+
+//Return completed weather sessions, newest first.
+function resultspack_weather_get_completed_sessions()
+{
+    resultspack_weather_ensure_sessions_table();
+
+    $result = safe_r_sql(
+        "SELECT CrwsId,CrwsTournament,CrwsStationId,CrwsDeviceId," .
+        "CrwsStationName,CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
+        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes " .
+        "FROM CustomResultsPackWeatherSessions " .
+        "WHERE CrwsEndedEpoch IS NOT NULL " .
+        "ORDER BY CrwsStartedEpoch DESC"
+    );
+
+    $sessions = array();
+
+    while ($row = safe_fetch($result)) {
+        $sessions[] = array(
+            'id' => (int) $row->CrwsId,
+            'tournament_id' => (int) $row->CrwsTournament,
+            'station_id' => (int) $row->CrwsStationId,
+            'device_id' => $row->CrwsDeviceId !== null
+                ? (int) $row->CrwsDeviceId
+                : null,
+            'station_name' => (string) $row->CrwsStationName,
+            'started_epoch' => (int) $row->CrwsStartedEpoch,
+            'ended_epoch' => (int) $row->CrwsEndedEpoch,
+            'timezone' => (string) $row->CrwsTimezone,
+            'shooting_bearing' => $row->CrwsShootingBearing !== null
+                ? (float) $row->CrwsShootingBearing
+                : null,
+            'sensor_height' => $row->CrwsSensorHeight !== null
+                ? (float) $row->CrwsSensorHeight
+                : null,
+            'position_notes' => (string) $row->CrwsPositionNotes,
+        );
+    }
+
+    return $sessions;
+}
+
+//Find one completed weather session by ID.
+function resultspack_weather_get_completed_session($sessionId)
+{
+    $sessionId = (int) $sessionId;
+
+    if ($sessionId <= 0) {
+        return null;
+    }
+
+    foreach (resultspack_weather_get_completed_sessions() as $session) {
+        if ((int) $session['id'] === $sessionId) {
+            return $session;
+        }
+    }
+
+    return null;
 }

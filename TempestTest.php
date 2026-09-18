@@ -630,6 +630,31 @@ if (!$completedSessions) {
                 . (int) $storedObservationCount
                 . '</td></tr>';
 
+            $quality =
+                resultspack_weather_session_quality($selectedHistorySession['id']);
+
+            if ($quality && $quality['expected'] > 0) {
+                echo '<tr><td class="Bold">Expected observations</td><td>'
+                    . (int) $quality['expected']
+                    . '</td></tr>';
+
+                echo '<tr><td class="Bold">Data coverage</td><td>'
+                    . htmlspecialchars(
+                        number_format($quality['coverage_percent'], 1)
+                    )
+                    . '%</td></tr>';
+
+                echo '<tr><td class="Bold">Missing observations</td><td>'
+                    . (int) $quality['missing']
+                    . '</td></tr>';
+
+                echo '<tr><td class="Bold">Longest data gap</td><td>'
+                    . (int) $quality['longest_gap_minutes']
+                    . ' minute'
+                    . ($quality['longest_gap_minutes'] === 1 ? '' : 's')
+                    . '</td></tr>';
+            }
+
             echo '<tr><td class="Bold">Import</td><td>';
 
             echo '<form method="post" action="WeatherImportAction.php" style="margin:0">';

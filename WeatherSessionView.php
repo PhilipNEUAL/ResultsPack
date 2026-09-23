@@ -2711,6 +2711,50 @@ echo '<tr><td class="Bold">Sensor height</td><td>'
         : 'Not recorded')
     . '</td></tr>';
 
+    echo '<tr><td class="Bold">Station fore/aft position</td><td>'
+        . htmlspecialchars(
+            resultspack_weather_forward_offset_label(
+                $session['forward_offset']
+            )
+        )
+        . '</td></tr>';
+
+    echo '<tr><td class="Bold">Station lateral position</td><td>'
+        . htmlspecialchars(
+            resultspack_weather_lateral_offset_label(
+                $session['lateral_offset']
+            )
+        )
+        . '</td></tr>';
+
+    echo '<tr><td class="Bold">Ground surface</td><td>'
+        . ($session['ground_surface'] !== ''
+            ? htmlspecialchars(
+                ucwords(
+                    str_replace(
+                        '_',
+                        ' ',
+                        $session['ground_surface']
+                    )
+                )
+            )
+            : 'Not recorded')
+        . '</td></tr>';
+
+    echo '<tr><td class="Bold">Site exposure</td><td>'
+        . ($session['exposure'] !== ''
+            ? htmlspecialchars(
+                ucwords(
+                    str_replace(
+                        '_',
+                        ' ',
+                        $session['exposure']
+                    )
+                )
+            )
+            : 'Not recorded')
+        . '</td></tr>';
+
 echo '<tr><td class="Bold">Position notes</td><td>'
     . ($session['position_notes'] !== ''
         ? nl2br(htmlspecialchars($session['position_notes']))

@@ -427,6 +427,50 @@ if ($summary['configured']) {
                 : 'Not recorded')
             . '</td></tr>';
 
+        echo '<tr><td class="Bold">Station fore/aft position</td><td>'
+            . htmlspecialchars(
+                resultspack_weather_forward_offset_label(
+                    $activeSession['forward_offset']
+                )
+            )
+            . '</td></tr>';
+
+        echo '<tr><td class="Bold">Station lateral position</td><td>'
+            . htmlspecialchars(
+                resultspack_weather_lateral_offset_label(
+                    $activeSession['lateral_offset']
+                )
+            )
+            . '</td></tr>';
+
+        echo '<tr><td class="Bold">Ground surface</td><td>'
+            . ($activeSession['ground_surface'] !== ''
+                ? htmlspecialchars(
+                    ucwords(
+                        str_replace(
+                            '_',
+                            ' ',
+                            $activeSession['ground_surface']
+                        )
+                    )
+                )
+                : 'Not recorded')
+            . '</td></tr>';
+
+        echo '<tr><td class="Bold">Site exposure</td><td>'
+            . ($activeSession['exposure'] !== ''
+                ? htmlspecialchars(
+                    ucwords(
+                        str_replace(
+                            '_',
+                            ' ',
+                            $activeSession['exposure']
+                        )
+                    )
+                )
+                : 'Not recorded')
+            . '</td></tr>';
+
         echo '<tr><td class="Bold">Position notes</td><td>'
             . ($activeSession['position_notes'] !== ''
                 ? nl2br(htmlspecialchars($activeSession['position_notes']))
@@ -614,10 +658,118 @@ if ($summary['configured']) {
         echo '<div class="resultspack-muted">Height of the Tempest sensor above ground level.</div>';
         echo '</td></tr>';
 
+        echo '<tr><td class="Bold">Station fore/aft offset</td><td>';
+
+            $previousForwardOffset =
+                $latestSession['forward_offset'] ?? null;
+
+            echo '<input type="number" '
+                . 'name="forward_offset" '
+                . 'min="-1000" max="1000" step="0.1"'
+                . ($previousForwardOffset !== null
+                    ? ' value="' . htmlspecialchars(
+                        (string) $previousForwardOffset
+                    ) . '"'
+                    : '')
+                . '> m';
+
+            echo '<div class="resultspack-muted">'
+                . 'Use + for toward the targets and − for behind the shooting line. '
+                . 'For example, -5 means 5 m behind the shooting line.'
+                . '</div>';
+
+            echo '</td></tr>';
+
+
+            echo '<tr><td class="Bold">Station lateral offset</td><td>';
+
+            $previousLateralOffset =
+                $latestSession['lateral_offset'] ?? null;
+
+            echo '<input type="number" '
+                . 'name="lateral_offset" '
+                . 'min="-1000" max="1000" step="0.1"'
+                . ($previousLateralOffset !== null
+                    ? ' value="' . htmlspecialchars(
+                        (string) $previousLateralOffset
+                    ) . '"'
+                    : '')
+                . '> m';
+
+            echo '<div class="resultspack-muted">'
+                . 'Facing the targets: + is right and − is left. '
+                . 'For example, +5 means 5 m right of the field centre line.'
+                . '</div>';
+
+            echo '</td></tr>';
+
+
+            echo '<tr><td class="Bold">Ground surface</td><td>';
+
+            echo '<select name="ground_surface">';
+
+            $groundSurfaceOptions = array(
+                '' => 'Not recorded',
+                'grass' => 'Grass',
+                'artificial_turf' => 'Artificial turf',
+                'hardstanding' => 'Hardstanding',
+                'indoor_floor' => 'Indoor floor',
+                'mixed' => 'Mixed',
+                'other' => 'Other',
+            );
+
+            $previousGroundSurface =
+                $latestSession['ground_surface'] ?? '';
+
+            foreach ($groundSurfaceOptions as $value => $label) {
+                $selected =
+                    $previousGroundSurface === $value
+                        ? ' selected'
+                        : '';
+
+                echo '<option value="' . $value . '"' . $selected . '>'
+                    . htmlspecialchars($label)
+                    . '</option>';
+            }
+
+            echo '</select>';
+            echo '</td></tr>';
+
+
+            echo '<tr><td class="Bold">Site exposure</td><td>';
+
+            echo '<select name="exposure">';
+
+            $exposureOptions = array(
+                '' => 'Not recorded',
+                'open' => 'Open',
+                'partly_sheltered' => 'Partly sheltered',
+                'sheltered' => 'Sheltered',
+                'indoor' => 'Indoor',
+                'other' => 'Other',
+            );
+
+            $previousExposure =
+                $latestSession['exposure'] ?? '';
+
+            foreach ($exposureOptions as $value => $label) {
+                $selected =
+                    $previousExposure === $value
+                        ? ' selected'
+                        : '';
+
+                echo '<option value="' . $value . '"' . $selected . '>'
+                    . htmlspecialchars($label)
+                    . '</option>';
+            }
+
+            echo '</select>';
+            echo '</td></tr>';
+
         echo '<tr><td class="Bold">Station position / obstructions</td><td>';
         $previousNotes = $latestSession['position_notes'] ?? '';
 
-        echo '<textarea name="position_notes" rows="3" placeholder="For example: 10 m behind shooting line; open field; trees approximately 40 m west.">'
+        echo '<textarea name="position_notes" rows="3" placeholder="For example: trees approximately 40 m west; clubhouse behind station; sensor partly sheltered by tent.">'
             . htmlspecialchars($previousNotes)
             . '</textarea>';
         echo '</td></tr>';
@@ -1044,6 +1196,89 @@ if (!$allWeatherSessions) {
         echo '<input type="number" name="sensor_height" min="0.1" max="20" step="0.01" value="'
             . htmlspecialchars((string) ($session['sensor_height'] ?? ''))
             . '"> m';
+        echo '</label>';
+
+        echo '<br><br>';
+
+        echo '<label>Fore/aft offset<br>';
+        echo '<input type="number" '
+            . 'name="forward_offset" '
+            . 'min="-1000" max="1000" step="0.1" value="'
+            . htmlspecialchars(
+                (string) ($session['forward_offset'] ?? '')
+            )
+            . '"> m';
+        echo '</label>';
+
+        echo '<br><br>';
+
+        echo '<label>Lateral offset<br>';
+        echo '<input type="number" '
+            . 'name="lateral_offset" '
+            . 'min="-1000" max="1000" step="0.1" value="'
+            . htmlspecialchars(
+                (string) ($session['lateral_offset'] ?? '')
+            )
+            . '"> m';
+        echo '</label>';
+
+        echo '<br><br>';
+
+        echo '<label>Ground surface<br>';
+        echo '<select name="ground_surface">';
+
+        foreach (
+            array(
+                '' => 'Not recorded',
+                'grass' => 'Grass',
+                'artificial_turf' => 'Artificial turf',
+                'hardstanding' => 'Hardstanding',
+                'indoor_floor' => 'Indoor floor',
+                'mixed' => 'Mixed',
+                'other' => 'Other',
+            )
+            as $value => $label
+        ) {
+            $selected =
+                ($session['ground_surface'] ?? '') === $value
+                    ? ' selected'
+                    : '';
+
+            echo '<option value="' . $value . '"' . $selected . '>'
+                . htmlspecialchars($label)
+                . '</option>';
+        }
+
+        echo '</select>';
+        echo '</label>';
+
+        echo '<br><br>';
+
+        echo '<label>Exposure<br>';
+        echo '<select name="exposure">';
+
+        foreach (
+            array(
+                '' => 'Not recorded',
+                'open' => 'Open',
+                'partly_sheltered' => 'Partly sheltered',
+                'sheltered' => 'Sheltered',
+                'indoor' => 'Indoor',
+                'other' => 'Other',
+            )
+            as $value => $label
+        ) {
+            $selected =
+                ($session['exposure'] ?? '') === $value
+                    ? ' selected'
+                    : '';
+
+            echo '<option value="' . $value . '"' . $selected . '>'
+                . htmlspecialchars($label)
+                . '</option>';
+        }
+
+        echo '</select>';
         echo '</label>';
 
         echo '<br><br>';

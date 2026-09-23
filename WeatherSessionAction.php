@@ -158,6 +158,10 @@ $result = resultspack_weather_start_session(array(
     'timezone' => $timezone,
     'shooting_bearing' => $_POST['shooting_bearing'] ?? null,
     'sensor_height' => $_POST['sensor_height'] ?? null,
+    'forward_offset' => $_POST['forward_offset'] ?? null,
+    'lateral_offset' => $_POST['lateral_offset'] ?? null,
+    'ground_surface' => $_POST['ground_surface'] ?? '',
+    'exposure' => $_POST['exposure'] ?? '',
     'position_notes' => $_POST['position_notes'] ?? '',
     'research_status' => $_POST['research_status'] ?? 'real',
 ));

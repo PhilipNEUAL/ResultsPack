@@ -1329,56 +1329,94 @@ echo '</form>';
 
 echo '</table>';
 
-if ($timingCorrections) {
-    echo '<br>';
-    echo '<table class="Tabella freeWidth">';
-    echo '<tr><th class="Main" colspan="6">Timing correction audit trail</th></tr>';
-    echo '<tr>';
-    echo '<th class="Title">Recorded</th>';
-    echo '<th class="Title">Old start</th>';
-    echo '<th class="Title">Old end</th>';
-    echo '<th class="Title">New start</th>';
-    echo '<th class="Title">New end</th>';
-    echo '<th class="Title">Reason</th>';
-    echo '</tr>';
+echo '<br>';
+echo '<table class="Tabella freeWidth">';
 
+echo '<tr><th class="Main" colspan="6">'
+    . 'Timing correction audit trail'
+    . ($timingCorrections
+        ? ' (' . count($timingCorrections) . ')'
+        : '')
+    . '</th></tr>';
+
+echo '<tr>';
+echo '<th class="Title">Recorded</th>';
+echo '<th class="Title">Old start</th>';
+echo '<th class="Title">Old end</th>';
+echo '<th class="Title">New start</th>';
+echo '<th class="Title">New end</th>';
+echo '<th class="Title">Reason</th>';
+echo '</tr>';
+
+if (!$timingCorrections) {
+    echo '<tr>';
+
+    echo '<td colspan="6" class="resultspack-muted">'
+        . 'No timing corrections have been recorded for this session.'
+        . '</td>';
+
+    echo '</tr>';
+} else {
     foreach ($timingCorrections as $correction) {
         echo '<tr>';
-        echo '<td>' . htmlspecialchars($correction['created']) . '</td>';
-        echo '<td>' . htmlspecialchars(
-            resultspack_weather_format_timestamp(
-                $correction['old_started_epoch'],
-                $correction['timezone'],
-                'd/m/Y H:i:s T'
+
+        echo '<td>'
+            . htmlspecialchars($correction['created'])
+            . '</td>';
+
+        echo '<td>'
+            . htmlspecialchars(
+                resultspack_weather_format_timestamp(
+                    $correction['old_started_epoch'],
+                    $correction['timezone'],
+                    'd/m/Y H:i:s T'
+                )
             )
-        ) . '</td>';
-        echo '<td>' . htmlspecialchars(
-            resultspack_weather_format_timestamp(
-                $correction['old_ended_epoch'],
-                $correction['timezone'],
-                'd/m/Y H:i:s T'
+            . '</td>';
+
+        echo '<td>'
+            . htmlspecialchars(
+                resultspack_weather_format_timestamp(
+                    $correction['old_ended_epoch'],
+                    $correction['timezone'],
+                    'd/m/Y H:i:s T'
+                )
             )
-        ) . '</td>';
-        echo '<td>' . htmlspecialchars(
-            resultspack_weather_format_timestamp(
-                $correction['new_started_epoch'],
-                $correction['timezone'],
-                'd/m/Y H:i:s T'
+            . '</td>';
+
+        echo '<td>'
+            . htmlspecialchars(
+                resultspack_weather_format_timestamp(
+                    $correction['new_started_epoch'],
+                    $correction['timezone'],
+                    'd/m/Y H:i:s T'
+                )
             )
-        ) . '</td>';
-        echo '<td>' . htmlspecialchars(
-            resultspack_weather_format_timestamp(
-                $correction['new_ended_epoch'],
-                $correction['timezone'],
-                'd/m/Y H:i:s T'
+            . '</td>';
+
+        echo '<td>'
+            . htmlspecialchars(
+                resultspack_weather_format_timestamp(
+                    $correction['new_ended_epoch'],
+                    $correction['timezone'],
+                    'd/m/Y H:i:s T'
+                )
             )
-        ) . '</td>';
-        echo '<td>' . nl2br(htmlspecialchars($correction['reason'])) . '</td>';
+            . '</td>';
+
+        echo '<td>'
+            . nl2br(
+                htmlspecialchars(
+                    $correction['reason']
+                )
+            )
+            . '</td>';
+
         echo '</tr>';
     }
-
-    echo '</table>';
 }
+
+echo '</table>';
 
 //Wind graph.
 echo '<br>';

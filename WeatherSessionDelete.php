@@ -21,7 +21,7 @@ if (!$preview['ok']) {
         . '</td></tr>';
 
     echo '<tr><td colspan="2">'
-        . '<a href="TempestTest.php">Return to weather session control</a>'
+        . '<a href="WeatherControl.php">Return to weather session control</a>'
         . '</td></tr>';
 
     echo '</table>';
@@ -38,7 +38,7 @@ if ($session['research_status'] !== 'test') {
         . '</td></tr>';
 
     echo '<tr><td colspan="2">'
-        . '<a href="TempestTest.php">Return to weather session control</a>'
+        . '<a href="WeatherControl.php">Return to weather session control</a>'
         . '</td></tr>';
 
     echo '</table>';
@@ -53,7 +53,7 @@ if ($session['ended_epoch'] === null) {
         . '</td></tr>';
 
     echo '<tr><td colspan="2">'
-        . '<a href="TempestTest.php">Return to weather session control</a>'
+        . '<a href="WeatherControl.php">Return to weather session control</a>'
         . '</td></tr>';
 
     echo '</table>';
@@ -139,7 +139,7 @@ echo '<input type="submit" value="Permanently delete Test session">';
 
 echo ' &nbsp; ';
 
-echo '<a href="TempestTest.php">Cancel</a>';
+echo '<a href="WeatherControl.php">Cancel</a>';
 
 echo '</form>';
 

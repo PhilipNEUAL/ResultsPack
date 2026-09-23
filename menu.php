@@ -12,17 +12,17 @@ $buildResults =
     . 'Modules/Custom/ResultsPack/';
 
 $weatherMonitor =
-    'Weather monitor / session control|'
+    'Weather control|'
     . $CFG->ROOT_DIR
-    . 'Modules/Custom/ResultsPack/TempestTest.php';
+    . 'Modules/Custom/ResultsPack/WeatherControl.php';
 
 $weatherViewer =
-    'Weather session viewer|'
+    'Session viewer|'
     . $CFG->ROOT_DIR
     . 'Modules/Custom/ResultsPack/WeatherSessionView.php';
 
 $weatherTransfer =
-    'Weather data export / import|'
+    'Import/export|'
     . $CFG->ROOT_DIR
     . 'Modules/Custom/ResultsPack/WeatherTransfer.php';
 

@@ -44,7 +44,7 @@ if (!$result['ok']) {
 }
 
 header(
-    'Location: TempestTest.php'
+    'Location: WeatherControl.php'
     . '?session_deleted=1'
     . '&deleted_session_id=' . $sessionId
 );

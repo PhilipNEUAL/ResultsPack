@@ -3,7 +3,16 @@
 require_once(__DIR__ . '/Lib/bootstrap.php');
 require_once(__DIR__ . '/Lib/weather.php');
 
-$PAGE_TITLE = 'Tempest Weather Test';
+function resultspack_weather_control_wind_kmh($value)
+{
+    if ($value === null || $value === '' || !is_numeric($value)) {
+        return null;
+    }
+
+    return (float) $value * 1.609344;
+}
+
+$PAGE_TITLE = 'Weather Control';
 
 include('Common/Templates/head.php');
 
@@ -15,7 +24,7 @@ $activeSession = resultspack_weather_get_active_session();
 $shootingBearing = $activeSession['shooting_bearing'] ?? null;
 
 echo '<table class="Tabella freeWidth">';
-echo '<tr><th class="Main" colspan="2">Tempest Weather Integration Test</th></tr>';
+echo '<tr><th class="Main" colspan="2">ResultsPack Weather Control</th></tr>';
 
 echo '<tr>';
 echo '<td class="Bold">Configuration</td>';
@@ -53,7 +62,7 @@ if ($summary['configured']) {
     echo '<br>';
 
     echo '<table class="Tabella freeWidth">';
-    echo '<tr><th class="Main" colspan="3">Tempest stations</th></tr>';
+    echo '<tr><th class="Main" colspan="3">Tempest station status</th></tr>';
 
     if (!$stationsResponse['ok']) {
         echo '<tr><td colspan="3"><b>Connection failed:</b> '
@@ -185,16 +194,31 @@ if ($summary['configured']) {
             . ' %</td></tr>';
 
         echo '<tr><td class="Bold">Wind lull</td><td>'
-            . resultspack_weather_format_number($obs['wind_lull'] ?? null, 1)
-            . ' mph</td></tr>';
+            . resultspack_weather_format_number(
+                resultspack_weather_control_wind_kmh(
+                    $obs['wind_lull'] ?? null
+                ),
+                1
+            )
+            . ' km/h</td></tr>';
 
         echo '<tr><td class="Bold">Wind average</td><td>'
-            . resultspack_weather_format_number($obs['wind_avg'] ?? null, 1)
-            . ' mph</td></tr>';
+            . resultspack_weather_format_number(
+                resultspack_weather_control_wind_kmh(
+                    $obs['wind_avg'] ?? null
+                ),
+                1
+            )
+            . ' km/h</td></tr>';
 
         echo '<tr><td class="Bold">Wind gust</td><td>'
-            . resultspack_weather_format_number($obs['wind_gust'] ?? null, 1)
-            . ' mph</td></tr>';
+            . resultspack_weather_format_number(
+                resultspack_weather_control_wind_kmh(
+                    $obs['wind_gust'] ?? null
+                ),
+                1
+            )
+            . ' km/h</td></tr>';
 
         $windDirection = $obs['wind_dir'] ?? null;
 
@@ -372,6 +396,11 @@ if ($summary['configured']) {
         }
 
         echo '<tr><td class="Bold">Status</td><td><b style="color:green">Active</b></td></tr>';
+        echo '<tr><td class="Bold">Research status</td><td>'
+            . htmlspecialchars(
+                ucfirst($activeSession['research_status'])
+            )
+            . '</td></tr>';
 
         echo '<tr><td class="Bold">Competition</td><td>'
             . htmlspecialchars($tournamentName)
@@ -549,6 +578,20 @@ if ($summary['configured']) {
 
         echo '</td></tr>';
 
+        echo '<tr><td class="Bold">Research status</td><td>';
+
+        echo '<select name="research_status" required>';
+        echo '<option value="real" selected>Real</option>';
+        echo '<option value="test">Test</option>';
+        echo '</select>';
+
+        echo '<div class="resultspack-muted">'
+            . 'Use Test for development or trial sessions. '
+            . 'Real sessions are protected from deletion.'
+            . '</div>';
+
+        echo '</td></tr>';
+
         echo '<tr><td class="Bold">Shooting bearing</td><td>';
         $previousBearing = $latestSession['shooting_bearing'] ?? null;
 
@@ -621,12 +664,12 @@ if ($summary['configured']) {
     echo '</table>';
 
 
-//Temporary historical-observation test. Choose a completed weather session and retrieve its observations from Tempest.
+//Choose a completed weather session and retrieve its observations from Tempest.
 $completedSessions = resultspack_weather_get_completed_sessions();
 
 echo '<br>';
 echo '<table class="Tabella freeWidth">';
-echo '<tr><th class="Main" colspan="2">Historical observation test</th></tr>';
+echo '<tr><th class="Main" colspan="2">Weather session history</th></tr>';
 
 if (($_GET['imported'] ?? '') === '1') {
     $received = (int) ($_GET['received'] ?? 0);
@@ -661,7 +704,7 @@ if (!$completedSessions) {
     echo '<td class="Bold">Completed session</td>';
     echo '<td>';
 
-    echo '<form method="get" action="TempestTest.php" style="margin:0">';
+    echo '<form method="get" action="WeatherControl.php" style="margin:0">';
     echo '<select name="history_session_id">';
     echo '<option value="">Choose completed session...</option>';
 
@@ -871,8 +914,7 @@ if (!$completedSessions) {
         }
     } else {
         echo '<tr><td colspan="2">'
-            . 'Choose one of the completed sessions above to test its '
-            . 'historical Tempest data.'
+            . 'Choose a completed session above to review or import its historical Tempest data '
             . '</td></tr>';
     }
 }

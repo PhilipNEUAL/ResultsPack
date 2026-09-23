@@ -31,7 +31,7 @@ if ($action === 'stop') {
     );
 
     $redirect =
-        'TempestTest.php?session=stopped'
+        'WeatherControl.php?session=stopped'
         . '&history_session_id=' . $sessionId;
 
     if ($importResult['ok']) {
@@ -159,6 +159,7 @@ $result = resultspack_weather_start_session(array(
     'shooting_bearing' => $_POST['shooting_bearing'] ?? null,
     'sensor_height' => $_POST['sensor_height'] ?? null,
     'position_notes' => $_POST['position_notes'] ?? '',
+    'research_status' => $_POST['research_status'] ?? 'real',
 ));
 
 if (!$result['ok']) {
@@ -170,7 +171,7 @@ $bearing = isset($_POST['shooting_bearing'])
     : '';
 
 header(
-    'Location: TempestTest.php?session=started'
+    'Location: WeatherControl.php?session=started'
     . ($bearing !== '' ? '&shooting_bearing=' . $bearing : '')
 );
 

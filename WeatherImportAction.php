@@ -30,7 +30,7 @@ if (!$result['ok']) {
 }
 
 header(
-    'Location: TempestTest.php?history_session_id='
+    'Location: WeatherControl.php?history_session_id='
     . $sessionId
     . '&imported=1'
     . '&received=' . (int) $result['received']

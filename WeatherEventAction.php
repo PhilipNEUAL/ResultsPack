@@ -27,5 +27,5 @@ if (!$result['ok']) {
     exit(htmlspecialchars($result['error']));
 }
 
-header('Location: TempestTest.php?event_recorded=1');
+header('Location: WeatherControl.php?event_recorded=1');
 exit;

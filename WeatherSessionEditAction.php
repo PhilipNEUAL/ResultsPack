@@ -29,5 +29,5 @@ if (!$result['ok']) {
     exit(htmlspecialchars($result['error']));
 }
 
-header('Location: TempestTest.php?session_updated=1');
+header('Location: WeatherControl.php?session_updated=1');
 exit;

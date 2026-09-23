@@ -72,10 +72,70 @@
 
     function updateWeather(){
         var indoor=document.getElementById('resultspack-weather-indoor');
-        var outdoor=document.querySelector('.resultspack-outdoor-weather');
-        if(!indoor||!outdoor)return;
-        outdoor.classList.toggle('resultspack-disabled',indoor.checked);
-        outdoor.querySelectorAll('input,select,textarea').forEach(function(control){control.disabled=indoor.checked;});
+        var noData=document.getElementById('resultspack-weather-indoor-na');
+        var noDataWrap=document.getElementById('resultspack-weather-indoor-na-wrap');
+        var environment=document.querySelector('.resultspack-outdoor-weather');
+
+        if(!indoor||!environment)return;
+
+        //The na choice only makes sense for an indoor event
+        if(noDataWrap){
+            noDataWrap.style.display=indoor.checked?'':'none';
+        }
+
+        //If the event is changed back to outdoor, indoors gets deactivated
+        if(!indoor.checked&&noData){
+            noData.checked=false;
+        }
+
+        //Being indoors shouldn'tr disable environmental data, only choosing the option does that
+        var disabled=!!(indoor.checked&&noData&&noData.checked);
+
+        environment.classList.toggle('resultspack-disabled',disabled);
+
+        environment.querySelectorAll('input,select,textarea,button').forEach(function(control){
+            control.disabled=disabled;
+        });
+
+        //Sunny / rain / snow etc. are outdoor descriptions, so hide them indoors.
+        var conditions=environment.querySelector('.resultspack-weather-conditions');
+
+        if(conditions){
+            conditions.style.display=indoor.checked?'none':'';
+
+            conditions.querySelectorAll('input').forEach(function(control){
+                control.disabled=indoor.checked||disabled;
+            });
+        }
+    }
+
+    function applyRecordedWeatherDefaults(form){
+        if(!form)return;
+
+        form.querySelectorAll('[data-resultspack-recorded-default]').forEach(function(control){
+            var recorded=control.getAttribute('data-resultspack-recorded-default');
+
+            if(recorded===null)return;
+
+            var force=
+                control.getAttribute('data-resultspack-recorded-force')==='1';
+
+            var current=String(control.value||'').trim();
+
+            if(force||current===''){
+                control.value=recorded;
+                autoGrowTextarea(control);
+            }
+        });
+
+        var indoorNoData=form.elements['weather_indoor_na'];
+
+        if(
+            indoorNoData&&
+            indoorNoData.getAttribute('data-resultspack-recorded-uncheck')==='1'
+        ){
+            indoorNoData.checked=false;
+        }
     }
 
     function rememberBaseDisabled(control){
@@ -218,6 +278,7 @@
             }
             var controls=form.querySelectorAll('[name="'+name.replace(/"/g,'\\"')+'"]');
             if(!controls.length)return;
+            if(controls[0].getAttribute('data-resultspack-no-save')==='1')return;
             if(controls[0].type==='radio'){
                 controls.forEach(function(el){el.checked=String(el.value)===String(saved[name]);});
             }else if(controls[0].type==='checkbox'){
@@ -238,6 +299,7 @@
             var state=saved.fields[name];
             var controls=form.querySelectorAll('[name="'+name.replace(/"/g,'\\"')+'"]');
             if(!controls.length||!state)return;
+            if(controls[0].getAttribute('data-resultspack-no-save')==='1')return;
             if(state.type==='radio'){
                 controls.forEach(function(el){if(!el.disabled)el.checked=String(el.value)===String(state.value);});
             }else if(state.type==='check-array'){
@@ -425,6 +487,36 @@
     document.addEventListener('click',function(event){
         var target=event.target;
         if(!target)return;
+        if(target.id==='resultspack-restore-recorded-weather'){
+            event.preventDefault();
+
+            var form=document.getElementById('resultspack-generator');
+            if(!form)return;
+
+            form.querySelectorAll('[data-resultspack-recorded-default]').forEach(function(control){
+                var recorded=control.getAttribute('data-resultspack-recorded-default');
+
+                if(recorded===null)return;
+
+                control.value=recorded;
+                autoGrowTextarea(control);
+            });
+
+            var indoorNoData=form.elements['weather_indoor_na'];
+
+            if(indoorNoData){
+                indoorNoData.checked=false;
+            }
+
+            updateWeather();
+
+            saveForm(
+                form,
+                form.getAttribute('data-storage-key')||'ianseo-results-pack'
+            );
+
+            return;
+        }
         if(target.id==='resultspack-award-add'){
             event.preventDefault();
             awardLibraryRequest({action:'add',kind:'award'},true);
@@ -475,7 +567,13 @@
     document.addEventListener('change',function(event){
         if(event.target&&event.target.hasAttribute('data-award-definition'))saveAwardDefinition(event.target);
         if(event.target&&event.target.classList.contains('resultspack-mode-select'))updateMode(event.target);
-        if(event.target&&event.target.id==='resultspack-weather-indoor')updateWeather();
+        if(event.target&&
+            (event.target.id==='resultspack-weather-indoor'||
+            event.target.id==='resultspack-weather-indoor-na'
+            )
+        ){
+            updateWeather();
+        }
         if(event.target&&event.target.name==='record_status')updateRecordStatus();
         if(event.target&&event.target.name==='individual_source')updateIndividualSource();
         if(event.target&&event.target.name==='event_name_same_as_cover')updateEventNameLink();
@@ -494,6 +592,7 @@
         if(!form){refreshUi();return;}
         var key=form.getAttribute('data-storage-key')||'ianseo-results-pack';
         restoreForm(form,key);
+        applyRecordedWeatherDefaults(form);
         refreshUi();
         resizeAllAutoGrow();
 

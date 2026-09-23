@@ -1435,6 +1435,174 @@ function resultspack_weather_get_sessions()
     return $sessions;
 }
 
+//Find one weather session by ID, whether active or completed.
+function resultspack_weather_get_session($sessionId)
+{
+    $sessionId = (int) $sessionId;
+
+    if ($sessionId <= 0) {
+        return null;
+    }
+
+    foreach (resultspack_weather_get_sessions() as $session) {
+        if ((int) $session['id'] === $sessionId) {
+            return $session;
+        }
+    }
+
+    return null;
+}
+
+function resultspack_weather_delete_preview($sessionId)
+{
+    resultspack_weather_ensure_sessions_table();
+    resultspack_weather_ensure_observations_table();
+    resultspack_weather_ensure_events_table();
+    resultspack_weather_ensure_timing_corrections_table();
+
+    $sessionId = (int) $sessionId;
+    $session = resultspack_weather_get_session($sessionId);
+
+    if (!$session) {
+        return array(
+            'ok' => false,
+            'error' => 'Weather session not found.',
+        );
+    }
+
+    $observationResult = safe_r_sql(
+        "SELECT COUNT(*) AS RowCount " .
+        "FROM CustomResultsPackWeatherObservations " .
+        "WHERE CrwoSession=" . $sessionId
+    );
+
+    $eventResult = safe_r_sql(
+        "SELECT COUNT(*) AS RowCount " .
+        "FROM CustomResultsPackWeatherEvents " .
+        "WHERE CrweSession=" . $sessionId
+    );
+
+    $correctionResult = safe_r_sql(
+        "SELECT COUNT(*) AS RowCount " .
+        "FROM CustomResultsPackWeatherTimingCorrections " .
+        "WHERE CrwtcSession=" . $sessionId
+    );
+
+    $observationRow = safe_fetch($observationResult);
+    $eventRow = safe_fetch($eventResult);
+    $correctionRow = safe_fetch($correctionResult);
+
+    return array(
+        'ok' => true,
+        'session' => $session,
+        'observations' => $observationRow
+            ? (int) $observationRow->RowCount
+            : 0,
+        'events' => $eventRow
+            ? (int) $eventRow->RowCount
+            : 0,
+        'timing_corrections' => $correctionRow
+            ? (int) $correctionRow->RowCount
+            : 0,
+    );
+}
+
+function resultspack_weather_delete_test_session($sessionId)
+{
+    resultspack_weather_ensure_sessions_table();
+    resultspack_weather_ensure_observations_table();
+    resultspack_weather_ensure_events_table();
+    resultspack_weather_ensure_timing_corrections_table();
+
+    $sessionId = (int) $sessionId;
+
+    if ($sessionId <= 0) {
+        return array(
+            'ok' => false,
+            'error' => 'Invalid weather session.',
+        );
+    }
+
+    safe_w_sql('START TRANSACTION');
+
+    $result = safe_r_sql(
+        "SELECT CrwsId,CrwsResearchStatus,CrwsEndedEpoch " .
+        "FROM CustomResultsPackWeatherSessions " .
+        "WHERE CrwsId=" . $sessionId . " " .
+        "FOR UPDATE"
+    );
+
+    $row = safe_fetch($result);
+
+    if (!$row) {
+        safe_w_sql('ROLLBACK');
+
+        return array(
+            'ok' => false,
+            'error' => 'Weather session not found.',
+        );
+    }
+
+    $status = resultspack_weather_research_status(
+        (string) $row->CrwsResearchStatus
+    );
+
+    if ($status !== 'test') {
+        safe_w_sql('ROLLBACK');
+
+        return array(
+            'ok' => false,
+            'error' => 'Only Test weather sessions may be deleted.',
+        );
+    }
+
+    if ($row->CrwsEndedEpoch === null) {
+        safe_w_sql('ROLLBACK');
+
+        return array(
+            'ok' => false,
+            'error' => 'An active weather session cannot be deleted. Stop it first.',
+        );
+    }
+
+    $preview = resultspack_weather_delete_preview($sessionId);
+
+    safe_w_sql(
+        "DELETE FROM CustomResultsPackWeatherTimingCorrections " .
+        "WHERE CrwtcSession=" . $sessionId
+    );
+
+    safe_w_sql(
+        "DELETE FROM CustomResultsPackWeatherEvents " .
+        "WHERE CrweSession=" . $sessionId
+    );
+
+    safe_w_sql(
+        "DELETE FROM CustomResultsPackWeatherObservations " .
+        "WHERE CrwoSession=" . $sessionId
+    );
+
+    safe_w_sql(
+        "DELETE FROM CustomResultsPackWeatherSessions " .
+        "WHERE CrwsId=" . $sessionId . " " .
+        "AND CrwsResearchStatus='test' " .
+        "AND CrwsEndedEpoch IS NOT NULL"
+    );
+
+    safe_w_sql('COMMIT');
+
+    return array(
+        'ok' => true,
+        'session_id' => $sessionId,
+        'observations_deleted' =>
+            $preview['observations'] ?? 0,
+        'events_deleted' =>
+            $preview['events'] ?? 0,
+        'timing_corrections_deleted' =>
+            $preview['timing_corrections'] ?? 0,
+    );
+}
+
 //Update the editable setup information for a weather session.
 function resultspack_weather_update_session($sessionId, array $values)
 {
@@ -1627,3 +1795,1292 @@ function resultspack_weather_get_observations($sessionId)
 
     return $observations;
 }
+
+//Summarise a list of numeric weather values.
+function resultspack_weather_numeric_summary(array $values)
+{
+    $numbers = array();
+
+    foreach ($values as $value) {
+        if ($value !== null && is_numeric($value)) {
+            $numbers[] = (float) $value;
+        }
+    }
+
+    if (!$numbers) {
+        return null;
+    }
+
+    return array(
+        'count' => count($numbers),
+        'average' => array_sum($numbers) / count($numbers),
+        'min' => min($numbers),
+        'max' => max($numbers),
+    );
+}
+
+//Calculate circular mean of compass bearings since average does not work for directions; for example, the average of 359° and 1° should be 0°, not 180°.
+function resultspack_weather_circular_mean(array $directions)
+{
+    $x = 0.0;
+    $y = 0.0;
+    $count = 0;
+
+    foreach ($directions as $direction) {
+        if ($direction === null || !is_numeric($direction)) {
+            continue;
+        }
+
+        $radians = deg2rad((float) $direction);
+
+        $x += cos($radians);
+        $y += sin($radians);
+        $count++;
+    }
+
+    if ($count === 0) {
+        return null;
+    }
+
+    //If directions cancel one another there is no single prevailing direction
+    if (abs($x) < 0.000001 && abs($y) < 0.000001) {
+        return null;
+    }
+
+    $degrees = rad2deg(atan2($y, $x));
+
+    if ($degrees < 0) {
+        $degrees += 360;
+    }
+
+    return $degrees;
+}
+
+//Environmental summary for one tournament. Looking for all REAL sessions within the date range to account for multi-day tournaments and the possibility of service interruption.
+function resultspack_weather_results_summary($tournamentId)
+{
+    $tournamentId = (int) $tournamentId;
+
+    if ($tournamentId <= 0) {
+        return array(
+            'ok' => false,
+            'error' => 'Invalid tournament ID.',
+        );
+    }
+
+    $sessions = array();
+
+    foreach (resultspack_weather_get_completed_sessions() as $session) {
+        if (
+            (int) $session['tournament_id'] === $tournamentId
+            && $session['research_status'] === 'real'
+        ) {
+            $sessions[] = $session;
+        }
+    }
+
+    if (!$sessions) {
+        return array(
+            'ok' => false,
+            'error' => 'No completed real environmental session was found for this tournament.',
+        );
+    }
+
+    $temperatures = array();
+    $humidities = array();
+    $windAverages = array();
+    $windGusts = array();
+    $windDirections = array();
+
+    $relativeWindCounts = array();
+
+    $precipitationTotal = 0.0;
+    $hasPrecipitationData = false;
+
+    $observationCount = 0;
+    $expectedCount = 0;
+    $receivedCount = 0;
+
+    $sessionIds = array();
+
+    foreach ($sessions as $session) {
+        $sessionIds[] = (int) $session['id'];
+
+        $quality = resultspack_weather_session_quality($session['id']);
+
+        if ($quality) {
+            $expectedCount += (int) $quality['expected'];
+            $receivedCount += (int) $quality['received'];
+        }
+
+        $observations = resultspack_weather_get_observations($session['id']);
+
+        foreach ($observations as $observation) {
+            $observationCount++;
+
+            if ($observation['air_temp'] !== null) {
+                $temperatures[] = $observation['air_temp'];
+            }
+
+            if ($observation['humidity'] !== null) {
+                $humidities[] = $observation['humidity'];
+            }
+
+            if ($observation['wind_avg'] !== null) {
+                $windAverages[] = $observation['wind_avg'];
+            }
+
+            if ($observation['wind_gust'] !== null) {
+                $windGusts[] = $observation['wind_gust'];
+            }
+
+            if ($observation['wind_dir'] !== null) {
+                $windDirections[] = $observation['wind_dir'];
+            }
+
+            if ($observation['precip_accumulation'] !== null) {
+                $precipitationTotal += (float) $observation['precip_accumulation'];
+                $hasPrecipitationData = true;
+            }
+
+            if (
+                $observation['wind_dir'] !== null
+                && $session['shooting_bearing'] !== null
+            ) {
+                $relativeWind = resultspack_weather_relative_wind(
+                    $observation['wind_dir'],
+                    $session['shooting_bearing']
+                );
+
+                if ($relativeWind && !empty($relativeWind['label'])) {
+                    $label = $relativeWind['label'];
+
+                    if (!isset($relativeWindCounts[$label])) {
+                        $relativeWindCounts[$label] = 0;
+                    }
+
+                    $relativeWindCounts[$label]++;
+                }
+            }
+        }
+    }
+
+    if ($observationCount === 0) {
+        return array(
+            'ok' => false,
+            'error' => 'The cenvironmental session contains no observations.',
+        );
+    }
+
+    $temperature = resultspack_weather_numeric_summary($temperatures);
+    $humidity = resultspack_weather_numeric_summary($humidities);
+    $windAverage = resultspack_weather_numeric_summary($windAverages);
+    $windGust = resultspack_weather_numeric_summary($windGusts);
+
+    //Tempest observations are stored in mph; convert to km/h for ResultsPack presentation without altering the raw data.
+    $windAverageKmh = $windAverage
+        ? $windAverage['average'] * 1.609344
+        : null;
+
+    $windGustMaxKmh = $windGust
+        ? $windGust['max'] * 1.609344
+        : null;
+
+    $prevailingDirection = resultspack_weather_circular_mean($windDirections);
+
+    $dominantRelativeWind = null;
+    $dominantRelativeWindCount = 0;
+
+    if ($relativeWindCounts) {
+        arsort($relativeWindCounts);
+
+        $dominantRelativeWind = array_key_first($relativeWindCounts);
+        $dominantRelativeWindCount = $relativeWindCounts[$dominantRelativeWind];
+    }
+
+    $coveragePercent = null;
+
+    if ($expectedCount > 0) {
+        $coveragePercent = ($receivedCount / $expectedCount) * 100;
+    }
+
+    //One-sentence summary for resultspack
+    $summaryParts = array();
+
+    if ($temperature) {
+        $summaryParts[] =
+            number_format($temperature['average'], 1) .
+            ' °C average (' .
+            number_format($temperature['min'], 1) .
+            '–' .
+            number_format($temperature['max'], 1) .
+            ' °C)';
+    }
+
+    if ($windAverageKmh !== null) {
+        $windText =
+            'wind ' .
+            number_format($windAverageKmh, 1) .
+            ' km/h average';
+
+        if ($windGustMaxKmh !== null) {
+            $windText .=
+                ', gusting to ' .
+                number_format($windGustMaxKmh, 1) .
+                ' km/h';
+        }
+
+        $summaryParts[] = $windText;
+    }
+
+    if ($dominantRelativeWind !== null) {
+        $summaryParts[] = 'predominantly ' . strtolower($dominantRelativeWind);
+    } elseif ($prevailingDirection !== null) {
+        $summaryParts[] =
+            'prevailing ' .
+            resultspack_weather_compass_direction($prevailingDirection) .
+            ' (' .
+            number_format($prevailingDirection, 0) .
+            '°)';
+    }
+
+    if ($hasPrecipitationData) {
+        if ($precipitationTotal <= 0) {
+            $summaryParts[] = 'dry';
+        } else {
+            $summaryParts[] =
+                number_format($precipitationTotal, 1) .
+                ' mm precipitation recorded';
+        }
+    }
+
+    $summary = implode('; ', $summaryParts);
+
+    if ($summary !== '') {
+        $summary .= '.';
+    }
+
+    return array(
+        'ok' => true,
+
+        'session_ids' => $sessionIds,
+        'session_count' => count($sessions),
+
+        'observation_count' => $observationCount,
+        'expected_observations' => $expectedCount,
+        'received_observations' => $receivedCount,
+        'coverage_percent' => $coveragePercent,
+
+        'temperature_average' => $temperature
+            ? round($temperature['average'], 1)
+            : null,
+        'temperature_min' => $temperature
+            ? round($temperature['min'], 1)
+            : null,
+        'temperature_max' => $temperature
+            ? round($temperature['max'], 1)
+            : null,
+
+        'humidity_average' => $humidity
+            ? round($humidity['average'], 1)
+            : null,
+
+        'wind_average' => $windAverage
+            ? round($windAverage['average'], 1)
+            : null,
+        'wind_gust_max' => $windGust
+            ? round($windGust['max'], 1)
+            : null,
+
+            'wind_average_kmh' => $windAverageKmh !== null
+                ? round($windAverageKmh, 1)
+                : null,
+
+            'wind_gust_max_kmh' => $windGustMaxKmh !== null
+                ? round($windGustMaxKmh, 1)
+                : null,
+
+        'prevailing_direction' => $prevailingDirection !== null
+            ? round($prevailingDirection, 1)
+            : null,
+        'prevailing_compass' => $prevailingDirection !== null
+            ? resultspack_weather_compass_direction($prevailingDirection)
+            : null,
+
+        'dominant_relative_wind' => $dominantRelativeWind,
+        'dominant_relative_wind_count' => $dominantRelativeWindCount,
+
+        'precipitation_total' => $hasPrecipitationData
+            ? round($precipitationTotal, 2)
+            : null,
+
+        'summary' => $summary,
+    );
+}
+
+//Weather session transfer helpers
+function resultspack_weather_transfer_format_version()
+{
+    return 1;
+}
+
+//Return one session record
+function resultspack_weather_transfer_session_record($sessionId)
+{
+    resultspack_weather_ensure_sessions_table();
+
+    $sessionId = (int) $sessionId;
+
+    if ($sessionId <= 0) {
+        return null;
+    }
+
+    $result = safe_r_sql(
+        "SELECT CrwsId,CrwsTournament,CrwsStationId,CrwsDeviceId," .
+        "CrwsStationName,CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
+        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes," .
+        "CrwsResearchStatus,CrwsCreated " .
+        "FROM CustomResultsPackWeatherSessions " .
+        "WHERE CrwsId=" . $sessionId . " " .
+        "AND CrwsEndedEpoch IS NOT NULL " .
+        "LIMIT 1"
+    );
+
+    $row = safe_fetch($result);
+
+    if (!$row) {
+        return null;
+    }
+
+    return array(
+        'source_session_id' => (int) $row->CrwsId,
+        'source_tournament_id' => (int) $row->CrwsTournament,
+        'station_id' => (int) $row->CrwsStationId,
+        'device_id' => $row->CrwsDeviceId !== null
+            ? (int) $row->CrwsDeviceId
+            : null,
+        'station_name' => (string) $row->CrwsStationName,
+        'started_epoch' => (int) $row->CrwsStartedEpoch,
+        'ended_epoch' => (int) $row->CrwsEndedEpoch,
+        'timezone' => (string) $row->CrwsTimezone,
+        'shooting_bearing' => $row->CrwsShootingBearing !== null
+            ? (float) $row->CrwsShootingBearing
+            : null,
+        'sensor_height' => $row->CrwsSensorHeight !== null
+            ? (float) $row->CrwsSensorHeight
+            : null,
+        'position_notes' => (string) $row->CrwsPositionNotes,
+        'research_status' => resultspack_weather_research_status(
+            (string) $row->CrwsResearchStatus
+        ),
+        'created' => (string) $row->CrwsCreated,
+    );
+}
+
+//Return tournament metadata
+function resultspack_weather_transfer_tournament_record($tournamentId)
+{
+    $tournamentId = (int) $tournamentId;
+
+    foreach (resultspack_fetch_tournament_list() as $tournament) {
+        if ((int) $tournament['id'] !== $tournamentId) {
+            continue;
+        }
+
+        return array(
+            'source_tournament_id' => $tournamentId,
+            'code' => (string) ($tournament['code'] ?? ''),
+            'name' => (string) ($tournament['name'] ?? ''),
+            'short_name' => (string) ($tournament['short_name'] ?? ''),
+            'venue' => (string) ($tournament['venue'] ?? ''),
+            'where' => (string) ($tournament['where'] ?? ''),
+            'date_from' => (string) ($tournament['date_from'] ?? ''),
+            'date_to' => (string) ($tournament['date_to'] ?? ''),
+            'type_name' => (string) ($tournament['type_name'] ?? ''),
+        );
+    }
+
+    return array(
+        'source_tournament_id' => $tournamentId,
+        'code' => '',
+        'name' => '',
+        'short_name' => '',
+        'venue' => '',
+        'where' => '',
+        'date_from' => '',
+        'date_to' => '',
+        'type_name' => '',
+    );
+}
+
+//Return observations for transfer
+function resultspack_weather_transfer_observations($sessionId)
+{
+    resultspack_weather_ensure_observations_table();
+
+    $sessionId = (int) $sessionId;
+
+    $result = safe_r_sql(
+        "SELECT CrwoTimestamp,CrwoReportInterval," .
+        "CrwoWindLull,CrwoWindAvg,CrwoWindGust,CrwoWindDir," .
+        "CrwoStationPressure,CrwoSeaLevelPressure,CrwoAirTemp,CrwoRh," .
+        "CrwoIlluminance,CrwoUv,CrwoSolarRadiation," .
+        "CrwoPrecipAccumulation,CrwoLocalDayPrecipAccumulation," .
+        "CrwoPrecipType,CrwoStrikeCount,CrwoStrikeDistance,CrwoImported " .
+        "FROM CustomResultsPackWeatherObservations " .
+        "WHERE CrwoSession=" . $sessionId . " " .
+        "ORDER BY CrwoTimestamp ASC"
+    );
+
+    $rows = array();
+
+    while ($row = safe_fetch($result)) {
+        $rows[] = array(
+            'timestamp' => (int) $row->CrwoTimestamp,
+            'report_interval' => $row->CrwoReportInterval !== null
+                ? (int) $row->CrwoReportInterval
+                : null,
+            'wind_lull' => $row->CrwoWindLull !== null ? (float) $row->CrwoWindLull : null,
+            'wind_avg' => $row->CrwoWindAvg !== null ? (float) $row->CrwoWindAvg : null,
+            'wind_gust' => $row->CrwoWindGust !== null ? (float) $row->CrwoWindGust : null,
+            'wind_dir' => $row->CrwoWindDir !== null ? (float) $row->CrwoWindDir : null,
+            'station_pressure' => $row->CrwoStationPressure !== null ? (float) $row->CrwoStationPressure : null,
+            'sea_level_pressure' => $row->CrwoSeaLevelPressure !== null ? (float) $row->CrwoSeaLevelPressure : null,
+            'air_temp' => $row->CrwoAirTemp !== null ? (float) $row->CrwoAirTemp : null,
+            'humidity' => $row->CrwoRh !== null ? (float) $row->CrwoRh : null,
+            'illuminance' => $row->CrwoIlluminance !== null ? (float) $row->CrwoIlluminance : null,
+            'uv' => $row->CrwoUv !== null ? (float) $row->CrwoUv : null,
+            'solar_radiation' => $row->CrwoSolarRadiation !== null ? (float) $row->CrwoSolarRadiation : null,
+            'precip_accumulation' => $row->CrwoPrecipAccumulation !== null ? (float) $row->CrwoPrecipAccumulation : null,
+            'local_day_precip' => $row->CrwoLocalDayPrecipAccumulation !== null ? (float) $row->CrwoLocalDayPrecipAccumulation : null,
+            'precip_type' => $row->CrwoPrecipType !== null ? (int) $row->CrwoPrecipType : null,
+            'strike_count' => $row->CrwoStrikeCount !== null ? (int) $row->CrwoStrikeCount : null,
+            'strike_distance' => $row->CrwoStrikeDistance !== null ? (float) $row->CrwoStrikeDistance : null,
+            'imported' => (string) $row->CrwoImported,
+        );
+    }
+
+    return $rows;
+}
+
+//Count number of stored observations
+function resultspack_weather_transfer_observation_count($sessionId)
+{
+    resultspack_weather_ensure_observations_table();
+
+    $result = safe_r_sql(
+        "SELECT COUNT(*) AS ObservationCount " .
+        "FROM CustomResultsPackWeatherObservations " .
+        "WHERE CrwoSession=" . (int) $sessionId
+    );
+
+    $row = safe_fetch($result);
+
+    return $row ? (int) $row->ObservationCount : 0;
+}
+
+//Return event rows
+function resultspack_weather_transfer_events($sessionId)
+{
+    resultspack_weather_ensure_events_table();
+
+    $sessionId = (int) $sessionId;
+
+    $result = safe_r_sql(
+        "SELECT CrweId,CrweTimestamp,CrweAction,CrweReason,CrweNote,CrweCreated " .
+        "FROM CustomResultsPackWeatherEvents " .
+        "WHERE CrweSession=" . $sessionId . " " .
+        "ORDER BY CrweTimestamp ASC,CrweId ASC"
+    );
+
+    $events = array();
+
+    while ($row = safe_fetch($result)) {
+        $events[] = array(
+            'source_event_id' => (int) $row->CrweId,
+            'timestamp' => (int) $row->CrweTimestamp,
+            'action' => (string) $row->CrweAction,
+            'reason' => (string) $row->CrweReason,
+            'note' => (string) $row->CrweNote,
+            'created' => (string) $row->CrweCreated,
+        );
+    }
+
+    return $events;
+}
+
+//Create an ID for a completed session independent of local DB IDs
+function resultspack_weather_transfer_fingerprint(array $session)
+{
+    return hash(
+        'sha256',
+        implode('|', array(
+            (string) ($session['station_id'] ?? ''),
+            (string) ($session['device_id'] ?? ''),
+            (string) ($session['started_epoch'] ?? ''),
+            (string) ($session['ended_epoch'] ?? ''),
+            (string) ($session['timezone'] ?? ''),
+        ))
+    );
+}
+
+//Build complete transfer package for one session
+function resultspack_weather_build_transfer_package($sessionId)
+{
+    $session = resultspack_weather_transfer_session_record($sessionId);
+
+    if (!$session) {
+        return array(
+            'ok' => false,
+            'error' => 'Completed weather session not found.',
+        );
+    }
+
+    $tournament = resultspack_weather_transfer_tournament_record(
+        $session['source_tournament_id']
+    );
+
+    $corrections = resultspack_weather_get_timing_corrections($sessionId);
+
+    //Don't import local ID as DB ID
+    foreach ($corrections as &$correction) {
+        unset($correction['id'], $correction['session_id']);
+    }
+    unset($correction);
+
+    $package = array(
+        'format' => 'resultspack-weather-session',
+        'format_version' => resultspack_weather_transfer_format_version(),
+        'exported_at_utc' => gmdate('c'),
+        'session_fingerprint' => resultspack_weather_transfer_fingerprint($session),
+        'tournament' => $tournament,
+        'session' => $session,
+        'quality' => resultspack_weather_session_quality($sessionId),
+        'observations' => resultspack_weather_transfer_observations($sessionId),
+        'events' => resultspack_weather_transfer_events($sessionId),
+        'timing_corrections' => $corrections,
+    );
+
+    return array(
+        'ok' => true,
+        'package' => $package,
+    );
+}
+
+//Date comes before competition code so a backup folder sorts chronologically
+function resultspack_weather_transfer_filename(array $package, $extension = 'json')
+{
+    $tournament = $package['tournament'] ?? array();
+    $session = $package['session'] ?? array();
+
+    $label = trim((string) ($tournament['code'] ?? ''));
+
+    if ($label === '') {
+        $label = trim((string) ($tournament['name'] ?? 'WeatherSession'));
+    }
+
+    $label = preg_replace('/[^A-Za-z0-9._-]+/', '-', $label);
+    $label = trim((string) $label, '-_.');
+
+    if ($label === '') {
+        $label = 'WeatherSession';
+    }
+
+    $date = 'unknown-date';
+
+    if (!empty($session['started_epoch'])) {
+        $date = resultspack_weather_format_timestamp(
+            (int) $session['started_epoch'],
+            $session['timezone'] ?? 'UTC',
+            'Y-m-d'
+        );
+    }
+
+    $extension = strtolower(trim((string) $extension));
+
+    if (!in_array($extension, array('json', 'csv'), true)) {
+        $extension = 'json';
+    }
+
+    // Make filename start with year for sorting
+    if (preg_match('/^(\d{2})(.+)$/', $label, $matches)) {
+        $label = $matches[1] . '-' . $matches[2];
+    }
+
+    return 'ResultsPack-Weather-' . $date . '-' . $label . '.' . $extension;
+}
+
+function resultspack_weather_csv_text($value)
+{
+    $value = (string) $value;
+
+    if ($value !== '' && preg_match('/^[=+@-]/', $value)) {
+        return "'" . $value;
+    }
+
+    return $value;
+}
+
+//Make CSV
+function resultspack_weather_transfer_csv(array $package)
+{
+    $tournament = $package['tournament'] ?? array();
+    $session = $package['session'] ?? array();
+    $quality = $package['quality'] ?? array();
+    $observations = $package['observations'] ?? array();
+
+    $timezone = trim((string) ($session['timezone'] ?? 'UTC'));
+
+    if ($timezone === '') {
+        $timezone = 'UTC';
+    }
+
+    $startedLocal = !empty($session['started_epoch'])
+        ? resultspack_weather_format_timestamp(
+            (int) $session['started_epoch'],
+            $timezone,
+            'Y-m-d H:i:s T'
+        )
+        : '';
+
+    $endedLocal = !empty($session['ended_epoch'])
+        ? resultspack_weather_format_timestamp(
+            (int) $session['ended_epoch'],
+            $timezone,
+            'Y-m-d H:i:s T'
+        )
+        : '';
+
+    $handle = fopen('php://temp', 'w+');
+
+    if ($handle === false) {
+        return false;
+    }
+
+    $headers = array(
+        'competition_code',
+        'competition_name',
+        'competition_date_from',
+        'competition_date_to',
+        'session_fingerprint',
+        'research_status',
+        'station_name',
+        'station_id',
+        'device_id',
+        'timezone',
+        'shooting_bearing_deg',
+        'sensor_height_m',
+        'position_notes',
+        'session_started_local',
+        'session_ended_local',
+        'coverage_percent',
+        'missing_observations',
+        'observation_time_local',
+        'observation_epoch',
+        'report_interval_minutes',
+        'wind_lull_mph',
+        'wind_avg_mph',
+        'wind_gust_mph',
+        'wind_direction_from_deg',
+        'relative_wind_angle_deg',
+        'relative_wind_description',
+        'station_pressure_mb',
+        'sea_level_pressure_mb',
+        'air_temp_c',
+        'relative_humidity_percent',
+        'illuminance_lux',
+        'uv_index',
+        'solar_radiation_w_m2',
+        'precip_accumulation_mm',
+        'local_day_precip_mm',
+        'precip_type',
+        'lightning_strike_count',
+        'lightning_strike_distance_km',
+        'imported_at'
+    );
+
+    fputcsv($handle, $headers);
+
+    foreach ($observations as $observation) {
+        $relativeWind = null;
+
+        if (
+            isset($observation['wind_dir'])
+            && $observation['wind_dir'] !== null
+            && isset($session['shooting_bearing'])
+            && $session['shooting_bearing'] !== null
+        ) {
+            $relativeWind = resultspack_weather_relative_wind(
+                $observation['wind_dir'],
+                $session['shooting_bearing']
+            );
+        }
+
+        $observationLocal = !empty($observation['timestamp'])
+            ? resultspack_weather_format_timestamp(
+                (int) $observation['timestamp'],
+                $timezone,
+                'Y-m-d H:i:s T'
+            )
+            : '';
+
+        $row = array(
+            resultspack_weather_csv_text($tournament['code'] ?? ''),
+            resultspack_weather_csv_text($tournament['name'] ?? ''),
+            resultspack_weather_csv_text($tournament['date_from'] ?? ''),
+            resultspack_weather_csv_text($tournament['date_to'] ?? ''),
+            resultspack_weather_csv_text($package['session_fingerprint'] ?? ''),
+            resultspack_weather_csv_text($session['research_status'] ?? ''),
+            resultspack_weather_csv_text($session['station_name'] ?? ''),
+            $session['station_id'] ?? '',
+            $session['device_id'] ?? '',
+            resultspack_weather_csv_text($timezone),
+            $session['shooting_bearing'] ?? '',
+            $session['sensor_height'] ?? '',
+            resultspack_weather_csv_text($session['position_notes'] ?? ''),
+            resultspack_weather_csv_text($startedLocal),
+            resultspack_weather_csv_text($endedLocal),
+            $quality['coverage_percent'] ?? '',
+            $quality['missing'] ?? '',
+            resultspack_weather_csv_text($observationLocal),
+            $observation['timestamp'] ?? '',
+            $observation['report_interval'] ?? '',
+            $observation['wind_lull'] ?? '',
+            $observation['wind_avg'] ?? '',
+            $observation['wind_gust'] ?? '',
+            $observation['wind_dir'] ?? '',
+            $relativeWind['angle'] ?? '',
+            resultspack_weather_csv_text($relativeWind['label'] ?? ''),
+            $observation['station_pressure'] ?? '',
+            $observation['sea_level_pressure'] ?? '',
+            $observation['air_temp'] ?? '',
+            $observation['humidity'] ?? '',
+            $observation['illuminance'] ?? '',
+            $observation['uv'] ?? '',
+            $observation['solar_radiation'] ?? '',
+            $observation['precip_accumulation'] ?? '',
+            $observation['local_day_precip'] ?? '',
+            $observation['precip_type'] ?? '',
+            $observation['strike_count'] ?? '',
+            $observation['strike_distance'] ?? '',
+            resultspack_weather_csv_text($observation['imported'] ?? '')
+        );
+
+        fputcsv($handle, $row);
+    }
+
+    rewind($handle);
+    $csv = stream_get_contents($handle);
+    fclose($handle);
+
+    return $csv;
+}
+
+//Return validated SQL datetime expression
+function resultspack_weather_transfer_sql_datetime($value)
+{
+    $value = trim((string) $value);
+
+    if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $value)) {
+        return StrSafe_DB($value);
+    }
+
+    return 'NOW()';
+}
+
+//Limit imported free text
+function resultspack_weather_transfer_text($value, $limit)
+{
+    $value = trim((string) $value);
+    $limit = max(0, (int) $limit);
+
+    if ($limit === 0) {
+        return '';
+    }
+
+    if (function_exists('mb_substr')) {
+        return mb_substr($value, 0, $limit, 'UTF-8');
+    }
+
+    return substr($value, 0, $limit);
+}
+
+//Check package structure
+function resultspack_weather_validate_transfer_package(array $package)
+{
+    if (($package['format'] ?? '') !== 'resultspack-weather-session') {
+        return array(
+            'ok' => false,
+            'error' => 'This is not a ResultsPack weather-session package.',
+        );
+    }
+
+    if ((int) ($package['format_version'] ?? 0) !== resultspack_weather_transfer_format_version()) {
+        return array(
+            'ok' => false,
+            'error' => 'This weather package uses an unsupported format version.',
+        );
+    }
+
+    if (empty($package['session']) || !is_array($package['session'])) {
+        return array(
+            'ok' => false,
+            'error' => 'The weather package has no session metadata.',
+        );
+    }
+
+    $session = $package['session'];
+    $stationId = (int) ($session['station_id'] ?? 0);
+    $started = (int) ($session['started_epoch'] ?? 0);
+    $ended = (int) ($session['ended_epoch'] ?? 0);
+
+    if ($stationId <= 0 || $started <= 0 || $ended <= $started) {
+        return array(
+            'ok' => false,
+            'error' => 'The weather package contains invalid session identifiers or times.',
+        );
+    }
+
+    $timezone = trim((string) ($session['timezone'] ?? 'UTC'));
+
+    try {
+        new DateTimeZone($timezone);
+    } catch (Exception $e) {
+        return array(
+            'ok' => false,
+            'error' => 'The weather package contains an invalid timezone.',
+        );
+    }
+
+    $fingerprint = (string) ($package['session_fingerprint'] ?? '');
+    $expectedFingerprint = resultspack_weather_transfer_fingerprint($session);
+
+    if ($fingerprint !== '' && !hash_equals($expectedFingerprint, $fingerprint)) {
+        return array(
+            'ok' => false,
+            'error' => 'The weather package session fingerprint does not match its metadata.',
+        );
+    }
+
+    foreach (array('observations', 'events', 'timing_corrections') as $key) {
+        if (isset($package[$key]) && !is_array($package[$key])) {
+            return array(
+                'ok' => false,
+                'error' => 'The weather package has an invalid ' . $key . ' section.',
+            );
+        }
+    }
+
+    if (count($package['observations'] ?? array()) > 100000) {
+        return array(
+            'ok' => false,
+            'error' => 'The weather package contains too many observations to import safely.',
+        );
+    }
+
+    foreach (($package['observations'] ?? array()) as $observation) {
+        if (!is_array($observation) || (int) ($observation['timestamp'] ?? 0) <= 0) {
+            return array(
+                'ok' => false,
+                'error' => 'The weather package contains an invalid observation row.',
+            );
+        }
+    }
+
+    return array('ok' => true);
+}
+
+//Resolve package tournament onto local IANSEO installation
+function resultspack_weather_transfer_resolve_tournament(array $package, $requestedTournamentId = 0)
+{
+    $tournaments = resultspack_fetch_tournament_list();
+    $requestedTournamentId = (int) $requestedTournamentId;
+
+    if ($requestedTournamentId > 0) {
+        foreach ($tournaments as $tournament) {
+            if ((int) $tournament['id'] === $requestedTournamentId) {
+                return array(
+                    'ok' => true,
+                    'tournament_id' => $requestedTournamentId,
+                    'matched_by' => 'selected',
+                );
+            }
+        }
+
+        return array(
+            'ok' => false,
+            'error' => 'The selected local competition could not be found.',
+        );
+    }
+
+    $source = $package['tournament'] ?? array();
+    $code = trim((string) ($source['code'] ?? ''));
+    $name = trim((string) ($source['name'] ?? ''));
+    $dateFrom = trim((string) ($source['date_from'] ?? ''));
+
+    if ($code !== '') {
+        $matches = array();
+
+        foreach ($tournaments as $tournament) {
+            if (strcasecmp((string) $tournament['code'], $code) === 0) {
+                $matches[] = $tournament;
+            }
+        }
+
+        if (count($matches) === 1) {
+            return array(
+                'ok' => true,
+                'tournament_id' => (int) $matches[0]['id'],
+                'matched_by' => 'competition code',
+            );
+        }
+
+        if (count($matches) > 1 && $dateFrom !== '') {
+            $dated = array_values(array_filter(
+                $matches,
+                function ($tournament) use ($dateFrom) {
+                    return (string) ($tournament['date_from'] ?? '') === $dateFrom;
+                }
+            ));
+
+            if (count($dated) === 1) {
+                return array(
+                    'ok' => true,
+                    'tournament_id' => (int) $dated[0]['id'],
+                    'matched_by' => 'competition code and date',
+                );
+            }
+        }
+    }
+
+    if ($name !== '') {
+        $matches = array();
+
+        foreach ($tournaments as $tournament) {
+            if (strcasecmp(trim((string) $tournament['name']), $name) === 0) {
+                if ($dateFrom === '' || (string) ($tournament['date_from'] ?? '') === $dateFrom) {
+                    $matches[] = $tournament;
+                }
+            }
+        }
+
+        if (count($matches) === 1) {
+            return array(
+                'ok' => true,
+                'tournament_id' => (int) $matches[0]['id'],
+                'matched_by' => $dateFrom !== '' ? 'competition name and date' : 'competition name',
+            );
+        }
+    }
+
+    return array(
+        'ok' => false,
+        'needs_tournament' => true,
+        'error' => 'ResultsPack could not match the package to exactly one local competition. Please choose the local competition explicitly and import again.',
+    );
+}
+
+//Find an already imported copy of the same portable weather session
+function resultspack_weather_transfer_find_duplicate(array $session)
+{
+    resultspack_weather_ensure_sessions_table();
+
+    $stationId = (int) ($session['station_id'] ?? 0);
+    $started = (int) ($session['started_epoch'] ?? 0);
+    $ended = (int) ($session['ended_epoch'] ?? 0);
+
+    $result = safe_r_sql(
+        "SELECT CrwsId,CrwsTournament " .
+        "FROM CustomResultsPackWeatherSessions " .
+        "WHERE CrwsStationId=" . $stationId . " " .
+        "AND CrwsStartedEpoch=" . $started . " " .
+        "AND CrwsEndedEpoch=" . $ended . " " .
+        "ORDER BY CrwsId DESC LIMIT 1"
+    );
+
+    $row = safe_fetch($result);
+
+    if (!$row) {
+        return null;
+    }
+
+    return array(
+        'session_id' => (int) $row->CrwsId,
+        'tournament_id' => (int) $row->CrwsTournament,
+    );
+}
+
+//Import/merge a package without reusing source database IDs
+function resultspack_weather_import_transfer_package(array $package, $requestedTournamentId = 0)
+{
+    $validation = resultspack_weather_validate_transfer_package($package);
+
+    if (!$validation['ok']) {
+        return $validation;
+    }
+
+    $tournament = resultspack_weather_transfer_resolve_tournament(
+        $package,
+        $requestedTournamentId
+    );
+
+    if (!$tournament['ok']) {
+        return $tournament;
+    }
+
+    resultspack_weather_ensure_sessions_table();
+    resultspack_weather_ensure_observations_table();
+    resultspack_weather_ensure_events_table();
+    resultspack_weather_ensure_timing_corrections_table();
+
+    $session = $package['session'];
+    $duplicate = resultspack_weather_transfer_find_duplicate($session);
+    $sessionId = 0;
+    $existing = false;
+    $warning = '';
+
+    safe_w_sql('START TRANSACTION');
+
+    if ($duplicate) {
+        $sessionId = (int) $duplicate['session_id'];
+        $existing = true;
+
+        if ((int) $duplicate['tournament_id'] !== (int) $tournament['tournament_id']) {
+            $warning =
+                'The matching weather session already existed and is attached to a different local competition. Its existing competition link was left unchanged.';
+        }
+    } else {
+        $deviceId = isset($session['device_id']) && is_numeric($session['device_id'])
+            ? (int) $session['device_id']
+            : 0;
+
+        $deviceSql = $deviceId > 0 ? (string) $deviceId : 'NULL';
+
+        $bearingSql = isset($session['shooting_bearing']) && is_numeric($session['shooting_bearing'])
+            ? resultspack_weather_sql_number((float) $session['shooting_bearing'])
+            : 'NULL';
+
+        $heightSql = isset($session['sensor_height']) && is_numeric($session['sensor_height'])
+            ? resultspack_weather_sql_number((float) $session['sensor_height'])
+            : 'NULL';
+
+        $stationName = resultspack_weather_transfer_text(
+            $session['station_name'] ?? '',
+            255
+        );
+
+        $positionNotes = resultspack_weather_transfer_text(
+            $session['position_notes'] ?? '',
+            2000
+        );
+
+        $status = resultspack_weather_research_status(
+            $session['research_status'] ?? 'test'
+        );
+
+        safe_w_sql(
+            "INSERT INTO CustomResultsPackWeatherSessions (" .
+            "CrwsTournament,CrwsStationId,CrwsDeviceId,CrwsStationName," .
+            "CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
+            "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes," .
+            "CrwsResearchStatus,CrwsCreated" .
+            ") VALUES (" .
+            (int) $tournament['tournament_id'] . "," .
+            (int) $session['station_id'] . "," .
+            $deviceSql . "," .
+            StrSafe_DB($stationName) . "," .
+            (int) $session['started_epoch'] . "," .
+            (int) $session['ended_epoch'] . "," .
+            StrSafe_DB((string) $session['timezone']) . "," .
+            $bearingSql . "," .
+            $heightSql . "," .
+            StrSafe_DB($positionNotes) . "," .
+            StrSafe_DB($status) . "," .
+            resultspack_weather_transfer_sql_datetime($session['created'] ?? '') .
+            ")"
+        );
+
+        $createdSession = resultspack_weather_transfer_find_duplicate($session);
+
+        if (!$createdSession) {
+            safe_w_sql('ROLLBACK');
+
+            return array(
+                'ok' => false,
+                'error' => 'The weather session could not be created locally.',
+            );
+        }
+
+        $sessionId = (int) $createdSession['session_id'];
+    }
+
+    $beforeObservations = resultspack_weather_transfer_observation_count($sessionId);
+
+    foreach (($package['observations'] ?? array()) as $observation) {
+        $timestamp = (int) ($observation['timestamp'] ?? 0);
+
+        if ($timestamp <= 0) {
+            continue;
+        }
+
+        safe_w_sql(
+            "INSERT IGNORE INTO CustomResultsPackWeatherObservations (" .
+            "CrwoSession,CrwoTimestamp,CrwoReportInterval," .
+            "CrwoWindLull,CrwoWindAvg,CrwoWindGust,CrwoWindDir," .
+            "CrwoStationPressure,CrwoSeaLevelPressure,CrwoAirTemp,CrwoRh," .
+            "CrwoIlluminance,CrwoUv,CrwoSolarRadiation," .
+            "CrwoPrecipAccumulation,CrwoLocalDayPrecipAccumulation," .
+            "CrwoPrecipType,CrwoStrikeCount,CrwoStrikeDistance,CrwoImported" .
+            ") VALUES (" .
+            $sessionId . "," .
+            $timestamp . "," .
+            resultspack_weather_sql_number($observation['report_interval'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['wind_lull'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['wind_avg'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['wind_gust'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['wind_dir'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['station_pressure'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['sea_level_pressure'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['air_temp'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['humidity'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['illuminance'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['uv'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['solar_radiation'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['precip_accumulation'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['local_day_precip'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['precip_type'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['strike_count'] ?? null) . "," .
+            resultspack_weather_sql_number($observation['strike_distance'] ?? null) . "," .
+            resultspack_weather_transfer_sql_datetime($observation['imported'] ?? '') .
+            ")"
+        );
+    }
+
+    $afterObservations = resultspack_weather_transfer_observation_count($sessionId);
+
+    $eventsAdded = 0;
+
+    foreach (($package['events'] ?? array()) as $event) {
+        if (!is_array($event)) {
+            continue;
+        }
+
+        $timestamp = (int) ($event['timestamp'] ?? 0);
+        $action = strtolower(resultspack_weather_transfer_text($event['action'] ?? '', 32));
+        $reason = resultspack_weather_transfer_text($event['reason'] ?? '', 64);
+        $note = resultspack_weather_transfer_text($event['note'] ?? '', 1000);
+
+        if ($timestamp <= 0 || !in_array($action, array('delay', 'suspend', 'resume', 'abandon'), true)) {
+            continue;
+        }
+
+        $existingEvent = safe_r_sql(
+            "SELECT CrweId FROM CustomResultsPackWeatherEvents " .
+            "WHERE CrweSession=" . $sessionId . " " .
+            "AND CrweTimestamp=" . $timestamp . " " .
+            "AND CrweAction=" . StrSafe_DB($action) . " " .
+            "AND CrweReason=" . StrSafe_DB($reason) . " " .
+            "AND CrweNote=" . StrSafe_DB($note) . " " .
+            "LIMIT 1"
+        );
+
+        if (safe_fetch($existingEvent)) {
+            continue;
+        }
+
+        safe_w_sql(
+            "INSERT INTO CustomResultsPackWeatherEvents (" .
+            "CrweSession,CrweTimestamp,CrweAction,CrweReason,CrweNote,CrweCreated" .
+            ") VALUES (" .
+            $sessionId . "," .
+            $timestamp . "," .
+            StrSafe_DB($action) . "," .
+            StrSafe_DB($reason) . "," .
+            StrSafe_DB($note) . "," .
+            resultspack_weather_transfer_sql_datetime($event['created'] ?? '') .
+            ")"
+        );
+
+        $eventsAdded++;
+    }
+
+    $correctionsAdded = 0;
+
+    foreach (($package['timing_corrections'] ?? array()) as $correction) {
+        if (!is_array($correction)) {
+            continue;
+        }
+
+        $oldStarted = (int) ($correction['old_started_epoch'] ?? 0);
+        $oldEnded = (int) ($correction['old_ended_epoch'] ?? 0);
+        $newStarted = (int) ($correction['new_started_epoch'] ?? 0);
+        $newEnded = (int) ($correction['new_ended_epoch'] ?? 0);
+        $timezone = resultspack_weather_transfer_text(
+            $correction['timezone'] ?? ($session['timezone'] ?? 'UTC'),
+            64
+        );
+        $reason = resultspack_weather_transfer_text($correction['reason'] ?? '', 2000);
+
+        if ($oldStarted <= 0 || $oldEnded <= 0 || $newStarted <= 0 || $newEnded <= 0) {
+            continue;
+        }
+
+        $existingCorrection = safe_r_sql(
+            "SELECT CrwtcId FROM CustomResultsPackWeatherTimingCorrections " .
+            "WHERE CrwtcSession=" . $sessionId . " " .
+            "AND CrwtcOldStartedEpoch=" . $oldStarted . " " .
+            "AND CrwtcOldEndedEpoch=" . $oldEnded . " " .
+            "AND CrwtcNewStartedEpoch=" . $newStarted . " " .
+            "AND CrwtcNewEndedEpoch=" . $newEnded . " " .
+            "AND CrwtcTimezone=" . StrSafe_DB($timezone) . " " .
+            "AND CrwtcReason=" . StrSafe_DB($reason) . " " .
+            "LIMIT 1"
+        );
+
+        if (safe_fetch($existingCorrection)) {
+            continue;
+        }
+
+        safe_w_sql(
+            "INSERT INTO CustomResultsPackWeatherTimingCorrections (" .
+            "CrwtcSession,CrwtcOldStartedEpoch,CrwtcOldEndedEpoch," .
+            "CrwtcNewStartedEpoch,CrwtcNewEndedEpoch,CrwtcTimezone," .
+            "CrwtcReason,CrwtcCreated" .
+            ") VALUES (" .
+            $sessionId . "," .
+            $oldStarted . "," .
+            $oldEnded . "," .
+            $newStarted . "," .
+            $newEnded . "," .
+            StrSafe_DB($timezone) . "," .
+            StrSafe_DB($reason) . "," .
+            resultspack_weather_transfer_sql_datetime($correction['created'] ?? '') .
+            ")"
+        );
+
+        $correctionsAdded++;
+    }
+
+    safe_w_sql('COMMIT');
+
+    $quality = resultspack_weather_session_quality($sessionId);
+
+    return array(
+        'ok' => true,
+        'session_id' => $sessionId,
+        'existing_session' => $existing,
+        'tournament_id' => $existing && $duplicate
+            ? (int) $duplicate['tournament_id']
+            : (int) $tournament['tournament_id'],
+        'tournament_match' => (string) ($tournament['matched_by'] ?? ''),
+        'observations_received' => count($package['observations'] ?? array()),
+        'observations_added' => max(0, $afterObservations - $beforeObservations),
+        'events_received' => count($package['events'] ?? array()),
+        'events_added' => $eventsAdded,
+        'corrections_received' => count($package['timing_corrections'] ?? array()),
+        'corrections_added' => $correctionsAdded,
+        'quality' => $quality,
+        'warning' => $warning,
+    );
+}
+

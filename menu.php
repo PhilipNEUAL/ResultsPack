@@ -12,7 +12,7 @@ $buildResults =
     . 'Modules/Custom/ResultsPack/';
 
 $weatherMonitor =
-    'TWIT|'
+    'Weather monitor / session control|'
     . $CFG->ROOT_DIR
     . 'Modules/Custom/ResultsPack/TempestTest.php';
 
@@ -21,18 +21,23 @@ $weatherViewer =
     . $CFG->ROOT_DIR
     . 'Modules/Custom/ResultsPack/WeatherSessionView.php';
 
+$weatherTransfer =
+    'Weather data export / import|'
+    . $CFG->ROOT_DIR
+    . 'Modules/Custom/ResultsPack/WeatherTransfer.php';
+
 if (!in_array($resultsPackTitle, $ret['RESULTSPACK'], true)) {
     array_unshift($ret['RESULTSPACK'], $resultsPackTitle);
 }
-
 if (!in_array($buildResults, $ret['RESULTSPACK'], true)) {
     $ret['RESULTSPACK'][] = $buildResults;
 }
-
 if (!in_array($weatherMonitor, $ret['RESULTSPACK'], true)) {
     $ret['RESULTSPACK'][] = $weatherMonitor;
 }
-
 if (!in_array($weatherViewer, $ret['RESULTSPACK'], true)) {
     $ret['RESULTSPACK'][] = $weatherViewer;
+}
+if (!in_array($weatherTransfer, $ret['RESULTSPACK'], true)) {
+    $ret['RESULTSPACK'][] = $weatherTransfer;
 }

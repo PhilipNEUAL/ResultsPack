@@ -1,6 +1,7 @@
 <?php
 require_once(__DIR__ . '/Lib/bootstrap.php');
 require_once(__DIR__ . '/Lib/pdf.php');
+require_once(__DIR__ . '/Lib/weather.php');
 
 function resultspack_builder_textarea($name, $value, $resettable = false, $compact = false)
 {
@@ -30,6 +31,53 @@ $defaultOrganiserName = $first ? $first['organiser'] : '';
 $defaultIndividualSource = $nativeIndividualEvents ? 'events' : 'divclass';
 $detectedFinalCount = (int) (($finalEvents['counts']['individual'] ?? 0) + ($finalEvents['counts']['team'] ?? 0));
 $detectedIndoor = resultspack_is_indoor_selection($selectedTournaments);
+
+    $recordedWeather = null;
+    $defaultWeatherTemperature = '';
+    $defaultWeatherHumidity = '';
+    $defaultWeatherWindSpeed = '';
+    $defaultWeatherNotes = '';
+
+    if ($count === 1) {
+        $weatherTournamentIds = array_keys($selectedTournaments);
+        $weatherTournamentId = (int) $weatherTournamentIds[0];
+
+        $weatherCandidate =
+            resultspack_weather_results_summary($weatherTournamentId);
+
+        if (!empty($weatherCandidate['ok'])) {
+            $recordedWeather = $weatherCandidate;
+
+            if ($recordedWeather['temperature_average'] !== null) {
+                $defaultWeatherTemperature =
+                    number_format(
+                        $recordedWeather['temperature_average'],
+                        1,
+                        '.',
+                        ''
+                    );
+            }
+
+            if ($recordedWeather['humidity_average'] !== null) {
+                $defaultWeatherHumidity =
+                    (string) round($recordedWeather['humidity_average']);
+            }
+
+            if ($recordedWeather['wind_average_kmh'] !== null) {
+                $defaultWeatherWindSpeed =
+                    number_format(
+                        $recordedWeather['wind_average_kmh'],
+                        1,
+                        '.',
+                        ''
+                    );
+            }
+
+            $defaultWeatherNotes =
+                (string) ($recordedWeather['summary'] ?? '');
+        }
+    }
+
 $storageKey = 'ianseo-results-pack-v1-' . implode('-', array_keys($selectedTournaments));
 $legacyStorageKey = 'ianseo-results-pack-draft6-2-' . implode('-', array_keys($selectedTournaments));
 $settingsKey = $selectedTournaments ? resultspack_settings_key(array_keys($selectedTournaments)) : '';
@@ -40,8 +88,8 @@ $defaultIssueDate = date('Y-m-d');
 $PAGE_TITLE = 'Complete Results Pack';
 $IncludeJquery = true;
 $JS_SCRIPT = array(
-    '<link rel="stylesheet" href="assets/results-pack.css?v=1.0.2" type="text/css">',
-    '<script src="assets/results-pack.js?v=1.0.2"></script>',
+    '<link rel="stylesheet" href="assets/results-pack.css?v=1.0.4" type="text/css">',
+    '<script src="assets/results-pack.js?v=1.0.4-indoor"></script>',
 );
 include('Common/Templates/head.php');
 
@@ -112,21 +160,126 @@ if ($selectedTournaments) {
     echo '<label>E-mail address<input type="email" name="organiser_email" value=""></label>';
     echo '</div></td></tr>';
 
-    echo '<tr><td class="Bold">(f) Weather conditions</td><td>';
-    echo '<label class="resultspack-indoor-toggle"><input type="checkbox" name="weather_indoor" value="1" id="resultspack-weather-indoor"' . ($detectedIndoor ? ' checked' : '') . '> Indoor event - print “N/A - indoors.”</label>';
+    $recordedTemperatureAttr = $recordedWeather
+        ? ' data-resultspack-recorded-default="' . resultspack_h($defaultWeatherTemperature) . '"'
+        : '';
+
+    $recordedHumidityAttr = $recordedWeather
+        ? ' data-resultspack-recorded-default="' . resultspack_h($defaultWeatherHumidity) . '"'
+        : '';
+
+    $recordedWindAttr = $recordedWeather
+        ? ' data-resultspack-recorded-default="' . resultspack_h($defaultWeatherWindSpeed) . '"'
+        : '';
+
+    $recordedNotesAttr = $recordedWeather
+        ? ' data-resultspack-recorded-default="' . resultspack_h($defaultWeatherNotes) . '"'
+        : '';
+
+    $recordedWindUnitAttr = $recordedWeather
+        ? ' data-resultspack-recorded-default="kmh" data-resultspack-recorded-force="1"'
+        : '';
+
+    echo '<tr><td class="Bold">(f) Weather / environmental conditions</td><td>';
+
+        if ($recordedWeather) {
+        $coverageText = '';
+
+        if ($recordedWeather['coverage_percent'] !== null) {
+            $coverageText =
+                rtrim(
+                    rtrim(
+                        number_format(
+                            $recordedWeather['coverage_percent'],
+                            1,
+                            '.',
+                            ''
+                        ),
+                        '0'
+                    ),
+                    '.'
+                ) . '% coverage';
+        }
+
+        echo '<div class="resultspack-muted" style="margin-bottom:8px;">';
+        echo '<b>Weather data found.</b> ';
+        echo (int) $recordedWeather['observation_count'];
+        echo ' observations';
+
+        if ($coverageText !== '') {
+            echo ' · ' . resultspack_h($coverageText);
+        }
+
+        echo '. The fields below have been pre-filled and can be edited.';
+
+        $weatherSessionIds = array_values(
+            array_filter(
+                array_map(
+                    'intval',
+                    $recordedWeather['session_ids'] ?? array()
+                )
+            )
+        );
+
+        if ($weatherSessionIds) {
+            echo ' ';
+
+            foreach ($weatherSessionIds as $index => $weatherSessionId) {
+                if ($index > 0) {
+                    echo ' · ';
+                }
+
+                $linkText = count($weatherSessionIds) === 1
+                    ? 'View full environmental record'
+                    : 'View environmental session ' . ($index + 1);
+
+                echo '<a href="WeatherSessionView.php?session_id='
+                    . (int) $weatherSessionId
+                    . '" target="_blank" rel="noopener">'
+                    . resultspack_h($linkText)
+                    . '</a>';
+            }
+        }
+
+        echo '</div>';
+        }
+
+    echo '<label class="resultspack-indoor-toggle">';
+    echo '<input type="checkbox" name="weather_indoor" value="1" id="resultspack-weather-indoor" data-resultspack-no-save="1"' . ($detectedIndoor ? ' checked' : '') . '> Indoor event';
+    echo '</label>';
+
+    $defaultIndoorNoData = $detectedIndoor && !$recordedWeather;
+
+    echo '<label class="resultspack-indoor-toggle" id="resultspack-weather-indoor-na-wrap"' .
+        ($detectedIndoor ? '' : ' style="display:none;"') . '>';
+
+    echo '<input type="checkbox" name="weather_indoor_na" value="1" id="resultspack-weather-indoor-na"' .
+        ($defaultIndoorNoData ? ' checked' : '') .
+        ($recordedWeather ? ' data-resultspack-recorded-uncheck="1"' : '') .
+        '> No environmental data available - print “N/A - indoors.”';
+
+    echo '</label>';
+
     echo '<div class="resultspack-outdoor-weather">';
     echo '<div class="resultspack-weather-conditions">';
-    foreach (array('Sunny', 'Overcast', 'Windy', 'Rain', 'Snow') as $condition) {
-        echo '<label><input type="checkbox" name="weather_conditions[]" value="' . resultspack_h($condition) . '"> ' . resultspack_h($condition) . '</label>';
-    }
+        foreach (array('Sunny', 'Overcast', 'Windy', 'Rain', 'Snow') as $condition) {
+            echo '<label><input type="checkbox" name="weather_conditions[]" value="' . resultspack_h($condition) . '"> ' . resultspack_h($condition) . '</label>';
+        }
     echo '</div>';
     echo '<div class="resultspack-weather-grid">';
-    echo '<label>Temperature (°C)<input type="number" step="0.1" name="weather_temperature"></label>';
-    echo '<label>Humidity (%)<input type="number" min="0" max="100" step="1" name="weather_humidity"></label>';
-    echo '<label>Wind speed<input type="number" min="0" step="0.1" name="weather_wind_speed"></label>';
-    echo '<label>Wind unit<select name="weather_wind_unit"><option value="mph" selected>mph</option><option value="kmh">km/h</option><option value="ms">m/s</option></select></label>';
+    echo '<label>Temperature (°C)<input type="number" step="0.1" name="weather_temperature" value="' . resultspack_h($defaultWeatherTemperature) . '"' . $recordedTemperatureAttr . '></label>';    
+    echo '<label>Humidity (%)<input type="number" min="0" max="100" step="1" name="weather_humidity" value="' . resultspack_h($defaultWeatherHumidity) . '"' . $recordedHumidityAttr . '></label>';
+    echo '<label>Wind speed<input type="number" min="0" step="0.1" name="weather_wind_speed" value="' . resultspack_h($defaultWeatherWindSpeed) . '"' . $recordedWindAttr . '></label>';
+    echo '<label>Wind unit<select name="weather_wind_unit"' . $recordedWindUnitAttr . '><option value="kmh" selected>km/h</option><option value="mph">mph</option><option value="ms">m/s</option></select></label>';
     echo '</div>';
-    echo '<label>Additional weather notes<textarea name="weather_notes" rows="1" class="resultspack-autogrow" placeholder="Optional free-text observations"></textarea></label>';
+    echo '<label>Additional environmental notes<textarea name="weather_notes" rows="1" class="resultspack-autogrow" placeholder="Optional free-text observations"' . $recordedNotesAttr . '>' . resultspack_h($defaultWeatherNotes) . '</textarea></label>';
+        if ($recordedWeather) {
+            echo '<div class="resultspack-field-actions">';
+            echo '<button type="button" class="Button" id="resultspack-restore-recorded-weather">';
+            echo 'Get summary from Tempest';
+            echo '</button>';
+            echo '</div>';
+        }
     echo '</div></td></tr>';
 
     echo '<tr><td class="Bold">(g) Tabular list of each archer’s performance</td><td>';

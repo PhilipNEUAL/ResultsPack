@@ -884,16 +884,22 @@ $allWeatherSessions = resultspack_weather_get_sessions();
 
 echo '<br>';
 echo '<table class="Tabella freeWidth">';
-echo '<tr><th class="Main" colspan="9">Weather session history</th></tr>';
+echo '<tr><th class="Main" colspan="10">Weather session history</th></tr>';
 
 if (($_GET['session_updated'] ?? '') === '1') {
-    echo '<tr><td colspan="9" style="color:green"><b>'
+    echo '<tr><td colspan="10" style="color:green"><b>'
         . 'Weather session details updated.'
         . '</b></td></tr>';
 }
 
+if (($_GET['session_deleted'] ?? '') === '1') {
+    echo '<tr><td colspan="10" style="color:green"><b>'
+        . 'Test weather session deleted successfully.'
+        . '</b></td></tr>';
+}
+
 if (!$allWeatherSessions) {
-    echo '<tr><td colspan="9">No weather sessions recorded yet.</td></tr>';
+    echo '<tr><td colspan="10">No weather sessions recorded yet.</td></tr>';
 } else {
     echo '<tr>';
     echo '<th class="Title">ID</th>';
@@ -905,6 +911,7 @@ if (!$allWeatherSessions) {
     echo '<th class="Title">Notes</th>';
     echo '<th class="Title">View data</th>';
     echo '<th class="Title">Edit</th>';
+    echo '<th class="Title">Delete</th>';
     echo '</tr>';
 
     foreach ($allWeatherSessions as $session) {
@@ -970,9 +977,7 @@ if (!$allWeatherSessions) {
             } else {
                 echo '<span class="resultspack-muted">Session active</span>';
             }
-
-        echo '</td>';
-        
+       
         echo '<td>';
 
         echo '<form method="post" action="WeatherSessionEditAction.php">';
@@ -1037,11 +1042,37 @@ if (!$allWeatherSessions) {
 
         echo '<input type="submit" value="Save changes">';
 
+        echo '</td>';
+
+        echo '<td>';
+
+        if ($session['research_status'] === 'test') {
+            if ($session['ended_epoch'] === null) {
+                echo '<span class="resultspack-muted">'
+                    . 'Stop session first'
+                    . '</span>';
+            } else {
+                echo '<a href="WeatherSessionDelete.php?session_id='
+                    . (int) $session['id']
+                    . '" style="color:#b71c1c;font-weight:bold">'
+                    . 'Delete test session'
+                    . '</a>';
+            }
+        } else {
+            echo '<span class="resultspack-muted">'
+                . 'Protected'
+                . '</span>';
+        }
+
+        echo '</td>';
+
         echo '</form>';
 
         echo '</td>';
 
         echo '</tr>';
+
+        
     }
 }
 

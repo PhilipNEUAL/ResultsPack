@@ -433,6 +433,132 @@ function resultspack_weather_lateral_offset_label($value)
             : 'left of centre');
 }
 
+//Normalise a compass direction to 0 <= direction < 360.
+function resultspack_weather_normalise_direction($degrees)
+{
+    if ($degrees === null || $degrees === '' || !is_numeric($degrees)) {
+        return null;
+    }
+
+    $degrees = fmod((float) $degrees, 360.0);
+
+    if ($degrees < 0) {
+        $degrees += 360.0;
+    }
+
+    return $degrees;
+}
+
+
+//Return the shortest signed correction from one direction to another.
+//Example:
+// recorded = 56
+// verified = 359
+// result = -57
+function resultspack_weather_direction_difference($recorded, $verified)
+{
+    $recorded = resultspack_weather_normalise_direction($recorded);
+    $verified = resultspack_weather_normalise_direction($verified);
+
+    if ($recorded === null || $verified === null) {
+        return null;
+    }
+
+    $difference = $verified - $recorded;
+
+    while ($difference > 180) {
+        $difference -= 360;
+    }
+
+    while ($difference <= -180) {
+        $difference += 360;
+    }
+
+    return $difference;
+}
+
+
+//Apply correction to direction reference without changing raw data
+function resultspack_weather_apply_direction_correction(
+    $direction,
+    $correction = 0
+) {
+    $direction = resultspack_weather_normalise_direction($direction);
+
+    if ($direction === null) {
+        return null;
+    }
+
+    if (!is_numeric($correction)) {
+        $correction = 0;
+    }
+
+    return resultspack_weather_normalise_direction(
+        $direction + (float) $correction
+    );
+}
+
+
+//Return the shooting bearing that should be used for interpretation/display
+function resultspack_weather_effective_shooting_bearing(array $session)
+{
+    return resultspack_weather_apply_direction_correction(
+        $session['shooting_bearing'] ?? null,
+        $session['direction_correction'] ?? 0
+    );
+}
+
+
+//Return a Tempest wind direction corrected to the same geographic reference
+function resultspack_weather_effective_wind_direction(
+    $windDirection,
+    array $session
+) {
+    return resultspack_weather_apply_direction_correction(
+        $windDirection,
+        $session['direction_correction'] ?? 0
+    );
+}
+
+//How shooting direction was verified
+function resultspack_weather_direction_verification($value)
+{
+    $value = strtolower(trim((string) $value));
+
+    $allowed = array(
+        'unverified',
+        'phone_compass',
+        'map_satellite',
+        'second_compass',
+        'known_site_alignment',
+        'surveyed_bearing',
+        'other',
+    );
+
+    return in_array($value, $allowed, true)
+        ? $value
+        : 'unverified';
+}
+
+
+//Readable label for a direction-verification method
+function resultspack_weather_direction_verification_label($value)
+{
+    $value = resultspack_weather_direction_verification($value);
+
+    $labels = array(
+        'unverified' => 'Unverified',
+        'phone_compass' => 'Phone compass only',
+        'map_satellite' => 'Map / satellite',
+        'second_compass' => 'Second compass',
+        'known_site_alignment' => 'Known site alignment',
+        'surveyed_bearing' => 'Surveyed bearing',
+        'other' => 'Other',
+    );
+
+    return $labels[$value] ?? 'Unverified';
+}
+
 //Create a weather session table when first needed.
 function resultspack_weather_ensure_sessions_table()
 {
@@ -453,6 +579,8 @@ function resultspack_weather_ensure_sessions_table()
         "CrwsEndedEpoch bigint unsigned DEFAULT NULL," .
         "CrwsTimezone varchar(64) NOT NULL DEFAULT 'UTC'," .
         "CrwsShootingBearing decimal(5,1) DEFAULT NULL," .
+        "CrwsDirectionCorrection decimal(6,2) NOT NULL DEFAULT 0.00," .
+        "CrwsDirectionVerification varchar(32) NOT NULL DEFAULT 'unverified'," .
         "CrwsSensorHeight decimal(5,2) DEFAULT NULL," .
         "CrwsForwardOffset decimal(7,2) DEFAULT NULL," .
         "CrwsLateralOffset decimal(7,2) DEFAULT NULL," .
@@ -468,6 +596,12 @@ function resultspack_weather_ensure_sessions_table()
     );
 
     $siteColumns = array(
+        'CrwsDirectionCorrection' =>
+            "decimal(6,2) NOT NULL DEFAULT 0.00 AFTER CrwsShootingBearing",
+
+        'CrwsDirectionVerification' =>
+            "varchar(32) NOT NULL DEFAULT 'unverified' AFTER CrwsDirectionCorrection",
+    
         'CrwsForwardOffset' =>
             "decimal(7,2) DEFAULT NULL AFTER CrwsSensorHeight",
 
@@ -519,10 +653,9 @@ function resultspack_weather_get_active_session()
     $result = safe_r_sql(
         "SELECT CrwsId,CrwsTournament,CrwsStationId,CrwsDeviceId," .
         "CrwsStationName,CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
-        "CrwsShootingBearing,CrwsSensorHeight,
-        CrwsForwardOffset,CrwsLateralOffset,
-        CrwsGroundSurface,CrwsExposure,
-        CrwsPositionNotes,CrwsResearchStatus " .
+        "CrwsShootingBearing,CrwsDirectionCorrection,CrwsDirectionVerification," .
+        "CrwsSensorHeight,CrwsForwardOffset,CrwsLateralOffset," .
+        "CrwsGroundSurface,CrwsExposure,CrwsPositionNotes,CrwsResearchStatus " .
         "FROM CustomResultsPackWeatherSessions " .
         "WHERE CrwsEndedEpoch IS NULL " .
         "ORDER BY CrwsId DESC LIMIT 1"
@@ -543,8 +676,17 @@ function resultspack_weather_get_active_session()
         'started_epoch' => (int) $row->CrwsStartedEpoch,
         'ended_epoch' => $row->CrwsEndedEpoch !== null ? (int) $row->CrwsEndedEpoch : null,
         'timezone' => (string) $row->CrwsTimezone,
-        'shooting_bearing' => $row->CrwsShootingBearing !== null ? (float) $row->CrwsShootingBearing : null,
-        'sensor_height' => $row->CrwsSensorHeight !== null ? (float) $row->CrwsSensorHeight : null,
+        'shooting_bearing' => $row->CrwsShootingBearing !== null
+            ? (float) $row->CrwsShootingBearing
+            : null,
+        'direction_correction' => $row->CrwsDirectionCorrection !== null
+            ? (float) $row->CrwsDirectionCorrection
+            : 0.0,
+        'direction_verification' =>
+            (string) $row->CrwsDirectionVerification,
+        'sensor_height' => $row->CrwsSensorHeight !== null
+            ? (float) $row->CrwsSensorHeight
+            : null,
         'forward_offset' => $row->CrwsForwardOffset !== null
             ? (float) $row->CrwsForwardOffset
             : null,
@@ -721,8 +863,8 @@ function resultspack_weather_get_latest_session()
     $result = safe_r_sql(
         "SELECT CrwsId,CrwsTournament,CrwsStationId,CrwsDeviceId," .
         "CrwsStationName,CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
-        "CrwsShootingBearing,CrwsSensorHeight," .
-        "CrwsForwardOffset,CrwsLateralOffset," .
+        "CrwsShootingBearing,CrwsDirectionCorrection,CrwsDirectionVerification," .
+        "CrwsSensorHeight,CrwsForwardOffset,CrwsLateralOffset," .
         "CrwsGroundSurface,CrwsExposure," .
         "CrwsPositionNotes,CrwsResearchStatus " .
         "FROM CustomResultsPackWeatherSessions " .
@@ -747,6 +889,11 @@ function resultspack_weather_get_latest_session()
         'shooting_bearing' => $row->CrwsShootingBearing !== null
             ? (float) $row->CrwsShootingBearing
             : null,
+        'direction_correction' => $row->CrwsDirectionCorrection !== null
+            ? (float) $row->CrwsDirectionCorrection
+            : 0.0,
+        'direction_verification' =>
+            (string) $row->CrwsDirectionVerification,
         'sensor_height' => $row->CrwsSensorHeight !== null
             ? (float) $row->CrwsSensorHeight
             : null,
@@ -823,8 +970,8 @@ function resultspack_weather_get_completed_sessions()
     $result = safe_r_sql(
         "SELECT CrwsId,CrwsTournament,CrwsStationId,CrwsDeviceId," .
         "CrwsStationName,CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
-        "CrwsShootingBearing,CrwsSensorHeight," .
-        "CrwsForwardOffset,CrwsLateralOffset," .
+        "CrwsShootingBearing,CrwsDirectionCorrection,CrwsDirectionVerification," .
+        "CrwsSensorHeight,CrwsForwardOffset,CrwsLateralOffset," .
         "CrwsGroundSurface,CrwsExposure," .
         "CrwsPositionNotes,CrwsResearchStatus " .
         "FROM CustomResultsPackWeatherSessions " .
@@ -849,6 +996,11 @@ function resultspack_weather_get_completed_sessions()
             'shooting_bearing' => $row->CrwsShootingBearing !== null
                 ? (float) $row->CrwsShootingBearing
                 : null,
+            'direction_correction' => $row->CrwsDirectionCorrection !== null
+                ? (float) $row->CrwsDirectionCorrection
+                : 0.0,
+            'direction_verification' =>
+                (string) $row->CrwsDirectionVerification,
             'sensor_height' => $row->CrwsSensorHeight !== null
                 ? (float) $row->CrwsSensorHeight
                 : null,
@@ -1372,6 +1524,35 @@ function resultspack_weather_ensure_timing_corrections_table()
     $done = true;
 }
 
+//Create the direction reference correction audit table when first needed.
+function resultspack_weather_ensure_direction_corrections_table()
+{
+    static $done = false;
+
+    if ($done) {
+        return;
+    }
+
+    safe_w_sql(
+        "CREATE TABLE IF NOT EXISTS CustomResultsPackWeatherDirectionCorrections (" .
+        "CrwdcId int unsigned NOT NULL AUTO_INCREMENT," .
+        "CrwdcSession int unsigned NOT NULL," .
+        "CrwdcOldCorrection decimal(6,2) NOT NULL DEFAULT 0.00," .
+        "CrwdcNewCorrection decimal(6,2) NOT NULL DEFAULT 0.00," .
+        "CrwdcRecordedBearing decimal(6,2) DEFAULT NULL," .
+        "CrwdcVerifiedBearing decimal(6,2) NOT NULL," .
+        "CrwdcVerification varchar(32) NOT NULL DEFAULT 'other'," .
+        "CrwdcReason text NOT NULL," .
+        "CrwdcCreated datetime NOT NULL," .
+        "PRIMARY KEY (CrwdcId)," .
+        "KEY CrwdcSession (CrwdcSession)," .
+        "KEY CrwdcCreated (CrwdcCreated)" .
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+
+    $done = true;
+}
+
 //Turn an HTML datetime-local value into a Unix timestamp in a named timezone.
 function resultspack_weather_parse_local_datetime($value, $timezone)
 {
@@ -1575,6 +1756,217 @@ function resultspack_weather_get_timing_corrections($sessionId)
     return $corrections;
 }
 
+//Correct a completed session's direction reference while preserving raw bearings.
+function resultspack_weather_update_direction_reference(
+    $sessionId,
+    $verifiedBearing,
+    $verification,
+    $reason
+) {
+    resultspack_weather_ensure_sessions_table();
+    resultspack_weather_ensure_direction_corrections_table();
+
+    $sessionId = (int) $sessionId;
+
+    $session =
+        resultspack_weather_get_completed_session($sessionId);
+
+    if (!$session) {
+        return array(
+            'ok' => false,
+            'error' => 'Completed weather session not found.',
+        );
+    }
+
+    $recordedBearing =
+        $session['shooting_bearing'] ?? null;
+
+    if (
+        $recordedBearing === null
+        || !is_numeric($recordedBearing)
+    ) {
+        return array(
+            'ok' => false,
+            'error' =>
+                'This session has no recorded shooting bearing to correct.',
+        );
+    }
+
+    if (!is_numeric($verifiedBearing)) {
+        return array(
+            'ok' => false,
+            'error' =>
+                'Please enter a valid verified shooting bearing.',
+        );
+    }
+
+    $verifiedBearing = (float) $verifiedBearing;
+
+    if (
+        $verifiedBearing < 0
+        || $verifiedBearing >= 360
+    ) {
+        return array(
+            'ok' => false,
+            'error' =>
+                'Verified shooting bearing must be between 0 and 359.99 degrees.',
+        );
+    }
+
+    $verification =
+        resultspack_weather_direction_verification(
+            $verification
+        );
+
+    if (
+        $verification === 'unverified'
+        || $verification === 'phone_compass'
+    ) {
+        return array(
+            'ok' => false,
+            'error' =>
+                'Please choose an independent verification method.',
+        );
+    }
+
+    $reason = trim((string) $reason);
+
+    if ($reason === '') {
+        return array(
+            'ok' => false,
+            'error' =>
+                'Please record why the direction reference is being corrected.',
+        );
+    }
+
+    if (function_exists('mb_substr')) {
+        $reason =
+            mb_substr($reason, 0, 2000, 'UTF-8');
+    } else {
+        $reason =
+            substr($reason, 0, 2000);
+    }
+
+    $oldCorrection =
+        isset($session['direction_correction'])
+        && is_numeric($session['direction_correction'])
+            ? (float) $session['direction_correction']
+            : 0.0;
+
+    $newCorrection =
+        resultspack_weather_direction_difference(
+            $recordedBearing,
+            $verifiedBearing
+        );
+
+    if ($newCorrection === null) {
+        return array(
+            'ok' => false,
+            'error' =>
+                'The direction correction could not be calculated.',
+        );
+    }
+
+    //Audit the correction before changing the session.
+    safe_w_sql(
+        "INSERT INTO CustomResultsPackWeatherDirectionCorrections (" .
+        "CrwdcSession,CrwdcOldCorrection,CrwdcNewCorrection," .
+        "CrwdcRecordedBearing,CrwdcVerifiedBearing," .
+        "CrwdcVerification,CrwdcReason,CrwdcCreated" .
+        ") VALUES (" .
+        $sessionId . "," .
+        resultspack_weather_sql_number($oldCorrection) . "," .
+        resultspack_weather_sql_number($newCorrection) . "," .
+        resultspack_weather_sql_number($recordedBearing) . "," .
+        resultspack_weather_sql_number($verifiedBearing) . "," .
+        StrSafe_DB($verification) . "," .
+        StrSafe_DB($reason) . "," .
+        "NOW())"
+    );
+
+    safe_w_sql(
+        "UPDATE CustomResultsPackWeatherSessions SET " .
+        "CrwsDirectionCorrection=" .
+        resultspack_weather_sql_number($newCorrection) . "," .
+        "CrwsDirectionVerification=" .
+        StrSafe_DB($verification) . " " .
+        "WHERE CrwsId=" . $sessionId . " " .
+        "AND CrwsEndedEpoch IS NOT NULL"
+    );
+
+    return array(
+        'ok' => true,
+        'changed' => true,
+        'session_id' => $sessionId,
+        'recorded_bearing' =>
+            (float) $recordedBearing,
+        'verified_bearing' =>
+            (float) $verifiedBearing,
+        'old_correction' =>
+            (float) $oldCorrection,
+        'new_correction' =>
+            (float) $newCorrection,
+        'verification' =>
+            $verification,
+    );
+}
+
+//Return direction-reference corrections for one session, newest first.
+function resultspack_weather_get_direction_corrections($sessionId)
+{
+    resultspack_weather_ensure_direction_corrections_table();
+
+    $sessionId = (int) $sessionId;
+
+    if ($sessionId <= 0) {
+        return array();
+    }
+
+    $result = safe_r_sql(
+        "SELECT CrwdcId,CrwdcSession," .
+        "CrwdcOldCorrection,CrwdcNewCorrection," .
+        "CrwdcRecordedBearing,CrwdcVerifiedBearing," .
+        "CrwdcVerification,CrwdcReason,CrwdcCreated " .
+        "FROM CustomResultsPackWeatherDirectionCorrections " .
+        "WHERE CrwdcSession=" . $sessionId . " " .
+        "ORDER BY CrwdcId DESC"
+    );
+
+    $corrections = array();
+
+    while ($row = safe_fetch($result)) {
+        $corrections[] = array(
+            'id' => (int) $row->CrwdcId,
+            'session_id' => (int) $row->CrwdcSession,
+
+            'old_correction' =>
+                (float) $row->CrwdcOldCorrection,
+
+            'new_correction' =>
+                (float) $row->CrwdcNewCorrection,
+
+            'recorded_bearing' =>
+                $row->CrwdcRecordedBearing !== null
+                    ? (float) $row->CrwdcRecordedBearing
+                    : null,
+
+            'verified_bearing' =>
+                (float) $row->CrwdcVerifiedBearing,
+
+            'verification' =>
+                (string) $row->CrwdcVerification,
+
+            'reason' =>
+                (string) $row->CrwdcReason,
+
+            'created' =>
+                (string) $row->CrwdcCreated,
+        );
+    }
+
+    return $corrections;
+}
+
 //Return all weather sessions, newest first.
 function resultspack_weather_get_sessions()
 {
@@ -1583,8 +1975,8 @@ function resultspack_weather_get_sessions()
     $result = safe_r_sql(
         "SELECT CrwsId,CrwsTournament,CrwsStationId,CrwsDeviceId," .
         "CrwsStationName,CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
-        "CrwsShootingBearing,CrwsSensorHeight," .
-        "CrwsForwardOffset,CrwsLateralOffset," .
+        "CrwsShootingBearing,CrwsDirectionCorrection,CrwsDirectionVerification," .
+        "CrwsSensorHeight,CrwsForwardOffset,CrwsLateralOffset," .
         "CrwsGroundSurface,CrwsExposure," .
         "CrwsPositionNotes,CrwsResearchStatus " .
         "FROM CustomResultsPackWeatherSessions " .
@@ -1607,6 +1999,11 @@ function resultspack_weather_get_sessions()
             'shooting_bearing' => $row->CrwsShootingBearing !== null
                 ? (float) $row->CrwsShootingBearing
                 : null,
+            'direction_correction' => $row->CrwsDirectionCorrection !== null
+                ? (float) $row->CrwsDirectionCorrection
+                : 0.0,
+            'direction_verification' =>
+                (string) $row->CrwsDirectionVerification,
             'sensor_height' => $row->CrwsSensorHeight !== null
                 ? (float) $row->CrwsSensorHeight
                 : null,

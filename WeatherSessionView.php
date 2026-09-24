@@ -259,10 +259,15 @@ function resultspack_weather_viewer_render_wind_rose($observations, $session)
             continue;
         }
 
-        $direction = fmod(
-            ((float) $observation['wind_dir'] + 360),
-            360
-        );
+        $direction =
+            resultspack_weather_effective_wind_direction(
+                $observation['wind_dir'],
+                $session
+            );
+
+        if ($direction === null) {
+            continue;
+        }
 
         //Build a circular mean of the recorded FROM directions
         $directionRadians = deg2rad($direction);
@@ -532,22 +537,17 @@ function resultspack_weather_viewer_render_wind_rose($observations, $session)
     }
 
     // Shooting direction towards the targets
-    if (
-        isset($session['shooting_bearing'])
-        && $session['shooting_bearing'] !== null
-        && is_numeric($session['shooting_bearing'])
-    ) {
-        $bearing =
-            fmod(
-                ((float) $session['shooting_bearing'] + 360),
-                360
-            );
+    $bearing =
+        resultspack_weather_effective_shooting_bearing(
+            $session
+        );
 
+    if ($bearing !== null) {
         $bearingRadians =
             deg2rad($bearing - 90);
 
         $arrowRadius =
-            $maximumRadius + 18;
+            $maximumRadius - 14;
         
         // Thin line showing the shooting line
         $shootingLineDirectionA = fmod($bearing + 90, 360);
@@ -613,11 +613,7 @@ function resultspack_weather_viewer_render_wind_rose($observations, $session)
     . 'Prevailing wind flow (FROM → TO)'
     . '</span>';
 
-    if (
-        isset($session['shooting_bearing'])
-        && $session['shooting_bearing'] !== null
-        && is_numeric($session['shooting_bearing'])
-    ) {
+    if ($bearing !== null) {
         echo '<span>'
             . '<span style="display:inline-block;width:24px;'
             . 'border-top:3px dashed #222222;'
@@ -625,7 +621,7 @@ function resultspack_weather_viewer_render_wind_rose($observations, $session)
             . 'Shooting direction towards targets ('
             . htmlspecialchars(
                 number_format(
-                    (float) $session['shooting_bearing'],
+                    $bearing,
                     0
                 )
             )
@@ -740,10 +736,21 @@ if (!$session) {
     exit;
 }
 
+$effectiveShootingBearing =
+    resultspack_weather_effective_shooting_bearing($session);
+
+$directionCorrection =
+    isset($session['direction_correction'])
+    && is_numeric($session['direction_correction'])
+        ? (float) $session['direction_correction']
+        : 0.0;
+
 $observations = resultspack_weather_get_observations($session['id']);
 $quality = resultspack_weather_session_quality($session['id']);
 $events = resultspack_weather_get_events($session['id']);
 $timingCorrections = resultspack_weather_get_timing_corrections($session['id']);
+
+$directionCorrections = resultspack_weather_get_direction_corrections($sessionId);
 
 $competitionName = 'Competition ' . $session['tournament_id'];
 
@@ -851,33 +858,36 @@ foreach ($observations as $observation) {
         $windAverageCount++;
     }
 
-    if (
-        $observation['wind_gust'] !== null
-        && ($maxGust === null || $observation['wind_gust'] > $maxGust)
-    ) {
-        $maxGust = (float) $observation['wind_gust'];
-        $maxGustTimestamp = $observation['timestamp'];
-    }
-
     if ($observation['wind_dir'] !== null) {
-        $windDirection = fmod(((float) $observation['wind_dir'] + 360), 360);
-        $radians = deg2rad($windDirection);
-        $windDirectionSin += sin($radians);
-        $windDirectionCos += cos($radians);
-        $windDirectionCount++;
-
-        if ($session['shooting_bearing'] !== null) {
-            $relativeWind = resultspack_weather_relative_wind(
-                $windDirection,
-                $session['shooting_bearing']
+        $windDirection =
+            resultspack_weather_effective_wind_direction(
+                $observation['wind_dir'],
+                $session
             );
 
-            if ($relativeWind) {
-                $relativeLabel = $relativeWind['label'];
-                if (!isset($relativeWindCounts[$relativeLabel])) {
-                    $relativeWindCounts[$relativeLabel] = 0;
+        if ($windDirection !== null) {
+            $radians = deg2rad($windDirection);
+
+            $windDirectionSin += sin($radians);
+            $windDirectionCos += cos($radians);
+            $windDirectionCount++;
+
+            if ($effectiveShootingBearing !== null) {
+                $relativeWind =
+                    resultspack_weather_relative_wind(
+                        $windDirection,
+                        $effectiveShootingBearing
+                    );
+
+                if ($relativeWind) {
+                    $relativeLabel = $relativeWind['label'];
+
+                    if (!isset($relativeWindCounts[$relativeLabel])) {
+                        $relativeWindCounts[$relativeLabel] = 0;
+                    }
+
+                    $relativeWindCounts[$relativeLabel]++;
                 }
-                $relativeWindCounts[$relativeLabel]++;
             }
         }
     }
@@ -1411,6 +1421,271 @@ if (!$timingCorrections) {
                 )
             )
             . '</td>';
+
+        echo '</tr>';
+    }
+}
+
+echo '</table>';
+
+echo '<br>';
+
+echo '<table class="Tabella freeWidth">';
+
+echo '<tr><th class="Main" colspan="2">'
+    . 'Advanced direction reference correction'
+    . '</th></tr>';
+
+if (($_GET['direction_corrected'] ?? '') === '1') {
+    echo '<tr><td colspan="2" style="color:green"><b>'
+        . 'Direction reference correction recorded successfully.'
+        . '</b></td></tr>';
+}
+
+echo '<tr>';
+
+echo '<td colspan="2" class="resultspack-muted">';
+
+echo 'Use this only when the original compass reference is known to be incorrect '
+    . 'and the shooting direction has subsequently been verified independently. ';
+
+echo 'The original recorded bearing is preserved. '
+    . 'A correction is stored separately and audited.';
+
+echo '</td>';
+
+echo '</tr>';
+
+
+echo '<tr>';
+
+echo '<td class="Bold">Original recorded shooting bearing</td>';
+
+echo '<td>';
+
+if ($session['shooting_bearing'] !== null) {
+    echo htmlspecialchars(
+        resultspack_weather_format_number(
+            $session['shooting_bearing'],
+            1
+        )
+    ) . '°';
+} else {
+    echo 'Not recorded';
+}
+
+echo '</td>';
+
+echo '</tr>';
+
+
+echo '<tr>';
+
+echo '<td class="Bold">Current direction correction</td>';
+
+echo '<td>';
+
+$currentDirectionCorrection =
+    isset($session['direction_correction'])
+    && is_numeric($session['direction_correction'])
+        ? (float) $session['direction_correction']
+        : 0.0;
+
+echo htmlspecialchars(
+    resultspack_weather_format_number(
+        $currentDirectionCorrection,
+        1
+    )
+) . '°';
+
+echo '</td>';
+
+echo '</tr>';
+
+
+echo '<tr>';
+
+echo '<td class="Bold">Correction</td>';
+
+echo '<td>';
+
+echo '<form method="post" '
+    . 'action="WeatherDirectionCorrectionAction.php">';
+
+echo '<input type="hidden" name="csrf_token" value="'
+    . htmlspecialchars(resultspack_csrf_token())
+    . '">';
+
+echo '<input type="hidden" name="session_id" value="'
+    . (int) $session['id']
+    . '">';
+
+
+echo '<label>Verified shooting bearing<br>';
+
+echo '<input type="number" '
+    . 'name="verified_bearing" '
+    . 'min="0" max="359.99" step="0.01" required> °';
+
+echo '</label>';
+
+echo '<div class="resultspack-muted">'
+    . 'Enter the independently verified direction from the shooting line toward the targets.'
+    . '</div>';
+
+echo '<br>';
+
+
+echo '<label>Verification method<br>';
+
+echo '<select name="verification" required>';
+
+echo '<option value="">Choose method...</option>';
+echo '<option value="map_satellite">Map / satellite</option>';
+echo '<option value="second_compass">Second compass</option>';
+echo '<option value="known_site_alignment">Known site alignment</option>';
+echo '<option value="surveyed_bearing">Surveyed bearing</option>';
+echo '<option value="other">Other</option>';
+
+echo '</select>';
+
+echo '</label>';
+
+echo '<br><br>';
+
+
+echo '<label>Reason / evidence<br>';
+
+echo '<textarea name="reason" rows="3" required '
+    . 'placeholder="For example: Shooting direction verified from site map after the event; original phone compass reading was incorrect.">'
+    . '</textarea>';
+
+echo '</label>';
+
+echo '<br><br>';
+
+echo '<input type="submit" '
+    . 'value="Record direction correction">';
+
+echo '</form>';
+
+echo '</td>';
+
+echo '</tr>';
+
+echo '</table>';
+
+echo '<br>';
+
+echo '<table class="Tabella freeWidth">';
+
+echo '<tr><th class="Main" colspan="7">'
+    . 'Direction correction audit trail'
+    . ($directionCorrections
+        ? ' (' . count($directionCorrections) . ')'
+        : '')
+    . '</th></tr>';
+
+echo '<tr>';
+
+echo '<th class="Title">Recorded</th>';
+echo '<th class="Title">Original bearing</th>';
+echo '<th class="Title">Verified bearing</th>';
+echo '<th class="Title">Old correction</th>';
+echo '<th class="Title">New correction</th>';
+echo '<th class="Title">Verification</th>';
+echo '<th class="Title">Reason</th>';
+
+echo '</tr>';
+
+
+if (!$directionCorrections) {
+
+    echo '<tr>';
+
+    echo '<td colspan="7" class="resultspack-muted">'
+        . 'No direction-reference corrections have been recorded for this session.'
+        . '</td>';
+
+    echo '</tr>';
+
+} else {
+
+    foreach ($directionCorrections as $correction) {
+
+        echo '<tr>';
+
+
+        echo '<td>'
+            . htmlspecialchars(
+                $correction['created']
+            )
+            . '</td>';
+
+
+        echo '<td>';
+
+        if ($correction['recorded_bearing'] !== null) {
+            echo htmlspecialchars(
+                resultspack_weather_format_number(
+                    $correction['recorded_bearing'],
+                    1
+                )
+            ) . '°';
+        } else {
+            echo 'Not recorded';
+        }
+
+        echo '</td>';
+
+
+        echo '<td>'
+            . htmlspecialchars(
+                resultspack_weather_format_number(
+                    $correction['verified_bearing'],
+                    1
+                )
+            )
+            . '°</td>';
+
+
+        echo '<td>'
+            . htmlspecialchars(
+                resultspack_weather_format_number(
+                    $correction['old_correction'],
+                    1
+                )
+            )
+            . '°</td>';
+
+
+        echo '<td>'
+            . htmlspecialchars(
+                resultspack_weather_format_number(
+                    $correction['new_correction'],
+                    1
+                )
+            )
+            . '°</td>';
+
+
+        echo '<td>'
+            . htmlspecialchars(
+                resultspack_weather_direction_verification_label(
+                    $correction['verification']
+                )
+            )
+            . '</td>';
+
+
+        echo '<td>'
+            . nl2br(
+                htmlspecialchars(
+                    $correction['reason']
+                )
+            )
+            . '</td>';
+
 
         echo '</tr>';
     }
@@ -2699,11 +2974,49 @@ echo '<tr><td class="Bold">Timezone</td><td>'
     . htmlspecialchars($session['timezone'])
     . '</td></tr>';
 
-echo '<tr><td class="Bold">Shooting bearing</td><td>'
+echo '<tr><td class="Bold">Recorded shooting bearing</td><td>'
     . ($session['shooting_bearing'] !== null
-        ? htmlspecialchars((string) $session['shooting_bearing']) . '°'
+        ? htmlspecialchars(
+            resultspack_weather_format_number(
+                $session['shooting_bearing'],
+                1
+            )
+        ) . '°'
         : 'Not recorded')
     . '</td></tr>';
+
+if (
+    abs($directionCorrection) > 0.001
+    && $effectiveShootingBearing !== null
+) {
+    echo '<tr><td class="Bold">Corrected shooting bearing</td><td>'
+        . htmlspecialchars(
+            resultspack_weather_format_number(
+                $effectiveShootingBearing,
+                1
+            )
+        )
+        . '° '
+        . '<span class="resultspack-muted">'
+        . '(direction-reference correction '
+        . ($directionCorrection > 0 ? '+' : '')
+        . htmlspecialchars(
+            resultspack_weather_format_number(
+                $directionCorrection,
+                1
+            )
+        )
+        . '°)</span>'
+        . '</td></tr>';
+
+    echo '<tr><td class="Bold">Direction verification</td><td>'
+        . htmlspecialchars(
+            resultspack_weather_direction_verification_label(
+                $session['direction_verification']
+            )
+        )
+        . '</td></tr>';
+}
 
 echo '<tr><td class="Bold">Sensor height</td><td>'
     . ($session['sensor_height'] !== null
@@ -2895,28 +3208,46 @@ if ($requestedTime !== '' && $observations) {
                 echo '<tr><td class="Bold">Wind direction</td><td>';
 
                 if ($nearestObservation['wind_dir'] !== null) {
-                    echo htmlspecialchars(
-                        resultspack_weather_compass_direction(
-                            $nearestObservation['wind_dir']
+
+                    $effectiveWindDirection =
+                        resultspack_weather_effective_wind_direction(
+                            $nearestObservation['wind_dir'],
+                            $session
+                        );
+
+                    if ($effectiveWindDirection !== null) {
+
+                        echo htmlspecialchars(
+                            resultspack_weather_compass_direction(
+                                $effectiveWindDirection
+                            )
                         )
-                    )
-                    . ' ('
-                    . resultspack_weather_format_number(
-                        $nearestObservation['wind_dir'],
-                        0
-                    )
-                    . '°)';
+                        . ' ('
+                        . resultspack_weather_format_number(
+                            $effectiveWindDirection,
+                            0
+                        )
+                        . '°)';
 
-                    if ($session['shooting_bearing'] !== null) {
-                        $relativeWind =
-                            resultspack_weather_relative_wind(
-                                $nearestObservation['wind_dir'],
-                                $session['shooting_bearing']
-                            );
+                        if ($effectiveShootingBearing !== null) {
+                            $relativeWind =
+                                resultspack_weather_relative_wind(
+                                    $effectiveWindDirection,
+                                    $effectiveShootingBearing
+                                );
 
-                        echo ' — '
-                            . htmlspecialchars($relativeWind['label']);
+                            if ($relativeWind) {
+                                echo ' — '
+                                    . htmlspecialchars(
+                                        $relativeWind['label']
+                                    );
+                            }
+                        }
+
+                    } else {
+                        echo 'Not available';
                     }
+
                 } else {
                     echo 'Not available';
                 }
@@ -2985,6 +3316,19 @@ echo '</table>';
 echo '<br>';
 
 echo '<div style="overflow-x:auto;max-width:100%;">';
+if (abs($directionCorrection) > 0.001) {
+    echo '<div class="resultspack-muted" style="margin-bottom:6px">'
+        . 'Wind directions shown below include the session direction-reference correction of '
+        . ($directionCorrection > 0 ? '+' : '')
+        . htmlspecialchars(
+            resultspack_weather_format_number(
+                $directionCorrection,
+                1
+            )
+        )
+        . '°. Raw Tempest observations remain unchanged.'
+        . '</div>';
+}
 echo '<table class="Tabella freeWidth" style="min-width:1750px;">';
 echo '<tr><th class="Main" colspan="13">Minute-by-minute observations</th></tr>';
 
@@ -3064,17 +3408,29 @@ if (!$observations) {
         echo '<td>';
 
         if ($observation['wind_dir'] !== null) {
-            echo htmlspecialchars(
-                resultspack_weather_compass_direction(
-                    $observation['wind_dir']
+
+            $effectiveWindDirection =
+                resultspack_weather_effective_wind_direction(
+                    $observation['wind_dir'],
+                    $session
+                );
+
+            if ($effectiveWindDirection !== null) {
+                echo htmlspecialchars(
+                    resultspack_weather_compass_direction(
+                        $effectiveWindDirection
+                    )
                 )
-            )
-            . ' '
-            . resultspack_weather_format_number(
-                $observation['wind_dir'],
-                0
-            )
-            . '°';
+                . ' '
+                . resultspack_weather_format_number(
+                    $effectiveWindDirection,
+                    0
+                )
+                . '°';
+            } else {
+                echo 'Not available';
+            }
+
         } else {
             echo 'Not available';
         }

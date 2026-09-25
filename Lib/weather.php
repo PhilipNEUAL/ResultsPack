@@ -2049,6 +2049,7 @@ function resultspack_weather_delete_preview($sessionId)
     resultspack_weather_ensure_observations_table();
     resultspack_weather_ensure_events_table();
     resultspack_weather_ensure_timing_corrections_table();
+    resultspack_weather_ensure_direction_corrections_table();
 
     $sessionId = (int) $sessionId;
     $session = resultspack_weather_get_session($sessionId);
@@ -2078,9 +2079,16 @@ function resultspack_weather_delete_preview($sessionId)
         "WHERE CrwtcSession=" . $sessionId
     );
 
+    $directionCorrectionResult = safe_r_sql(
+        "SELECT COUNT(*) AS RowCount " .
+        "FROM CustomResultsPackWeatherDirectionCorrections " .
+        "WHERE CrwdcSession=" . $sessionId
+    );
+
     $observationRow = safe_fetch($observationResult);
     $eventRow = safe_fetch($eventResult);
     $correctionRow = safe_fetch($correctionResult);
+    $directionCorrectionRow = safe_fetch($directionCorrectionResult);
 
     return array(
         'ok' => true,
@@ -2093,6 +2101,9 @@ function resultspack_weather_delete_preview($sessionId)
             : 0,
         'timing_corrections' => $correctionRow
             ? (int) $correctionRow->RowCount
+            : 0,
+        'direction_corrections' => $directionCorrectionRow
+            ? (int) $directionCorrectionRow->RowCount
             : 0,
     );
 }
@@ -2157,6 +2168,13 @@ function resultspack_weather_delete_test_session($sessionId)
 
     $preview = resultspack_weather_delete_preview($sessionId);
 
+    resultspack_weather_ensure_direction_corrections_table();
+
+    safe_w_sql(
+        "DELETE FROM CustomResultsPackWeatherDirectionCorrections " .
+        "WHERE CrwdcSession=" . $sessionId
+    );
+
     safe_w_sql(
         "DELETE FROM CustomResultsPackWeatherTimingCorrections " .
         "WHERE CrwtcSession=" . $sessionId
@@ -2190,7 +2208,9 @@ function resultspack_weather_delete_test_session($sessionId)
             $preview['events'] ?? 0,
         'timing_corrections_deleted' =>
             $preview['timing_corrections'] ?? 0,
-    );
+        'direction_corrections_deleted' =>
+            $preview['direction_corrections'] ?? 0,
+            );
 }
 
 //Update the editable setup information for a weather session.
@@ -2754,7 +2774,7 @@ function resultspack_weather_transfer_session_record($sessionId)
     $result = safe_r_sql(
         "SELECT CrwsId,CrwsTournament,CrwsStationId,CrwsDeviceId," .
         "CrwsStationName,CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
-        "CrwsShootingBearing,CrwsSensorHeight,CrwsPositionNotes," .
+        "CrwsShootingBearing,CrwsSensorHeight,CrwsDirectionCorrection,CrwsDirectionVerification,CrwsPositionNotes," .
         "CrwsResearchStatus,CrwsCreated " .
         "FROM CustomResultsPackWeatherSessions " .
         "WHERE CrwsId=" . $sessionId . " " .
@@ -2782,6 +2802,12 @@ function resultspack_weather_transfer_session_record($sessionId)
         'shooting_bearing' => $row->CrwsShootingBearing !== null
             ? (float) $row->CrwsShootingBearing
             : null,
+        'direction_correction' => $row->CrwsDirectionCorrection !== null
+            ? (float) $row->CrwsDirectionCorrection
+            : 0.0,
+
+        'direction_verification' =>
+            (string) $row->CrwsDirectionVerification,
         'sensor_height' => $row->CrwsSensorHeight !== null
             ? (float) $row->CrwsSensorHeight
             : null,
@@ -2972,6 +2998,20 @@ function resultspack_weather_build_transfer_package($sessionId)
     }
     unset($correction);
 
+    $directionCorrections =
+        resultspack_weather_get_direction_corrections(
+            $sessionId
+        );
+
+    //Don't export local database IDs.
+    foreach ($directionCorrections as &$directionCorrection) {
+        unset(
+            $directionCorrection['id'],
+            $directionCorrection['session_id']
+        );
+    }
+    unset($directionCorrection);
+
     $package = array(
         'format' => 'resultspack-weather-session',
         'format_version' => resultspack_weather_transfer_format_version(),
@@ -2983,6 +3023,7 @@ function resultspack_weather_build_transfer_package($sessionId)
         'observations' => resultspack_weather_transfer_observations($sessionId),
         'events' => resultspack_weather_transfer_events($sessionId),
         'timing_corrections' => $corrections,
+        'direction_corrections' => $directionCorrections,
     );
 
     return array(
@@ -3053,6 +3094,17 @@ function resultspack_weather_transfer_csv(array $package)
     $quality = $package['quality'] ?? array();
     $observations = $package['observations'] ?? array();
 
+    $directionCorrection =
+        isset($session['direction_correction'])
+        && is_numeric($session['direction_correction'])
+            ? (float) $session['direction_correction']
+            : 0.0;
+
+    $effectiveShootingBearing =
+        resultspack_weather_effective_shooting_bearing(
+            $session
+        );
+
     $timezone = trim((string) ($session['timezone'] ?? 'UTC'));
 
     if ($timezone === '') {
@@ -3093,6 +3145,9 @@ function resultspack_weather_transfer_csv(array $package)
         'device_id',
         'timezone',
         'shooting_bearing_deg',
+        'direction_reference_correction_deg',
+        'corrected_shooting_bearing_deg',
+        'direction_verification',
         'sensor_height_m',
         'station_forward_offset_m',
         'station_lateral_offset_m',
@@ -3110,6 +3165,7 @@ function resultspack_weather_transfer_csv(array $package)
         'wind_avg_mph',
         'wind_gust_mph',
         'wind_direction_from_deg',
+        'corrected_wind_direction_from_deg',
         'relative_wind_angle_deg',
         'relative_wind_description',
         'station_pressure_mb',
@@ -3131,17 +3187,28 @@ function resultspack_weather_transfer_csv(array $package)
 
     foreach ($observations as $observation) {
         $relativeWind = null;
+        $effectiveWindDirection = null;
 
         if (
             isset($observation['wind_dir'])
             && $observation['wind_dir'] !== null
-            && isset($session['shooting_bearing'])
-            && $session['shooting_bearing'] !== null
         ) {
-            $relativeWind = resultspack_weather_relative_wind(
-                $observation['wind_dir'],
-                $session['shooting_bearing']
-            );
+            $effectiveWindDirection =
+                resultspack_weather_effective_wind_direction(
+                    $observation['wind_dir'],
+                    $session
+                );
+        }
+
+        if (
+            $effectiveWindDirection !== null
+            && $effectiveShootingBearing !== null
+        ) {
+            $relativeWind =
+                resultspack_weather_relative_wind(
+                    $effectiveWindDirection,
+                    $effectiveShootingBearing
+                );
         }
 
         $observationLocal = !empty($observation['timestamp'])
@@ -3164,18 +3231,17 @@ function resultspack_weather_transfer_csv(array $package)
             $session['device_id'] ?? '',
             resultspack_weather_csv_text($timezone),
             $session['shooting_bearing'] ?? '',
+            $directionCorrection,
+            $effectiveShootingBearing !== null
+                ? $effectiveShootingBearing
+                : '',
+            resultspack_weather_csv_text($session['direction_verification'] ?? 'unverified'),
             $session['sensor_height'] ?? '',
             $session['forward_offset'] ?? '',
             $session['lateral_offset'] ?? '',
-            resultspack_weather_csv_text(
-                $session['ground_surface'] ?? ''
-            ),
-            resultspack_weather_csv_text(
-                $session['exposure'] ?? ''
-            ),
-            resultspack_weather_csv_text(
-                $session['position_notes'] ?? ''
-            ),
+            resultspack_weather_csv_text($session['ground_surface'] ?? ''),
+            resultspack_weather_csv_text($session['exposure'] ?? ''),
+            resultspack_weather_csv_text($session['position_notes'] ?? ''),
             resultspack_weather_csv_text($startedLocal),
             resultspack_weather_csv_text($endedLocal),
             $quality['coverage_percent'] ?? '',
@@ -3187,6 +3253,9 @@ function resultspack_weather_transfer_csv(array $package)
             $observation['wind_avg'] ?? '',
             $observation['wind_gust'] ?? '',
             $observation['wind_dir'] ?? '',
+            $effectiveWindDirection !== null
+                ? $effectiveWindDirection
+                : '',
             $relativeWind['angle'] ?? '',
             resultspack_weather_csv_text($relativeWind['label'] ?? ''),
             $observation['station_pressure'] ?? '',
@@ -3470,6 +3539,7 @@ function resultspack_weather_import_transfer_package(array $package, $requestedT
     resultspack_weather_ensure_observations_table();
     resultspack_weather_ensure_events_table();
     resultspack_weather_ensure_timing_corrections_table();
+    resultspack_weather_ensure_direction_corrections_table();
 
     $session = $package['session'];
     $duplicate = resultspack_weather_transfer_find_duplicate($session);
@@ -3497,6 +3567,19 @@ function resultspack_weather_import_transfer_package(array $package, $requestedT
         $bearingSql = isset($session['shooting_bearing']) && is_numeric($session['shooting_bearing'])
             ? resultspack_weather_sql_number((float) $session['shooting_bearing'])
             : 'NULL';
+
+        $directionCorrectionSql =
+            isset($session['direction_correction'])
+            && is_numeric($session['direction_correction'])
+                ? resultspack_weather_sql_number(
+                    (float) $session['direction_correction']
+                )
+                : resultspack_weather_sql_number(0);
+
+        $directionVerification =
+            resultspack_weather_direction_verification(
+                $session['direction_verification'] ?? 'unverified'
+            );
 
         $heightSql = isset($session['sensor_height']) && is_numeric($session['sensor_height'])
             ? resultspack_weather_sql_number((float) $session['sensor_height'])
@@ -3544,7 +3627,7 @@ function resultspack_weather_import_transfer_package(array $package, $requestedT
             "INSERT INTO CustomResultsPackWeatherSessions (" .
             "CrwsTournament,CrwsStationId,CrwsDeviceId,CrwsStationName," .
             "CrwsStartedEpoch,CrwsEndedEpoch,CrwsTimezone," .
-            "CrwsShootingBearing,CrwsSensorHeight," .
+            "CrwsShootingBearing,CrwsDirectionCorrection,CrwsDirectionVerification,CrwsSensorHeight," .
             "CrwsForwardOffset,CrwsLateralOffset," .
             "CrwsGroundSurface,CrwsExposure,CrwsPositionNotes," .
             "CrwsResearchStatus,CrwsCreated " .
@@ -3557,6 +3640,8 @@ function resultspack_weather_import_transfer_package(array $package, $requestedT
             (int) $session['ended_epoch'] . "," .
             StrSafe_DB((string) $session['timezone']) . "," .
             $bearingSql . "," .
+            $directionCorrectionSql . "," .
+            StrSafe_DB($directionVerification) . "," .
             $heightSql . "," .
             $forwardOffsetSql . "," .
             $lateralOffsetSql . "," .
@@ -3568,18 +3653,80 @@ function resultspack_weather_import_transfer_package(array $package, $requestedT
             ")"
         );
 
-        $createdSession = resultspack_weather_transfer_find_duplicate($session);
+        //The INSERT has created a new local session. Use MySQL's primary key.
+        $insertIdResult = safe_w_sql(
+            "SELECT LAST_INSERT_ID() AS SessionId"
+        );
 
-        if (!$createdSession) {
+        $insertIdRow = safe_fetch($insertIdResult);
+
+        $sessionId =
+            $insertIdRow
+                ? (int) $insertIdRow->SessionId
+                : 0;
+
+
+        //Make sure the ID belongs to the session we have attempted to import.
+                $insertedSessionCheck = null;
+
+        if ($sessionId > 0) {
+            $checkResult = safe_w_sql(
+                "SELECT CrwsId " .
+                "FROM CustomResultsPackWeatherSessions " .
+                "WHERE CrwsId=" . $sessionId . " " .
+                "AND CrwsStationId=" .
+                (int) $session['station_id'] . " " .
+                "AND CrwsStartedEpoch=" .
+                (int) $session['started_epoch'] . " " .
+                "AND CrwsEndedEpoch=" .
+                (int) $session['ended_epoch'] . " " .
+                "LIMIT 1"
+            );
+
+            $insertedSessionCheck =
+                safe_fetch($checkResult);
+        }
+
+
+        if (!$insertedSessionCheck) {
             safe_w_sql('ROLLBACK');
 
             return array(
                 'ok' => false,
-                'error' => 'The weather session could not be created locally.',
+                'error' =>
+                    'The weather session INSERT did not produce a valid local session ID.',
             );
         }
+    }
 
-        $sessionId = (int) $createdSession['session_id'];
+    //Restore current direction reference if present; if not, omit.
+    if (
+        array_key_exists('direction_correction', $session)
+        || array_key_exists('direction_verification', $session)
+    ) {
+        $importedDirectionCorrection =
+            isset($session['direction_correction'])
+            && is_numeric($session['direction_correction'])
+                ? (float) $session['direction_correction']
+                : 0.0;
+
+        $importedDirectionVerification =
+            resultspack_weather_direction_verification(
+                $session['direction_verification'] ?? 'unverified'
+            );
+
+        safe_w_sql(
+            "UPDATE CustomResultsPackWeatherSessions SET " .
+            "CrwsDirectionCorrection=" .
+            resultspack_weather_sql_number(
+                $importedDirectionCorrection
+            ) . "," .
+            "CrwsDirectionVerification=" .
+            StrSafe_DB(
+                $importedDirectionVerification
+            ) . " " .
+            "WHERE CrwsId=" . (int) $sessionId
+        );
     }
 
     $beforeObservations = resultspack_weather_transfer_observation_count($sessionId);
@@ -3623,8 +3770,6 @@ function resultspack_weather_import_transfer_package(array $package, $requestedT
             ")"
         );
     }
-
-    $afterObservations = resultspack_weather_transfer_observation_count($sessionId);
 
     $eventsAdded = 0;
 
@@ -3672,66 +3817,212 @@ function resultspack_weather_import_transfer_package(array $package, $requestedT
         $eventsAdded++;
     }
 
-    $correctionsAdded = 0;
+$correctionsAdded = 0;
 
-    foreach (($package['timing_corrections'] ?? array()) as $correction) {
-        if (!is_array($correction)) {
-            continue;
-        }
+foreach (
+    ($package['timing_corrections'] ?? array())
+    as $correction
+) {
+    if (!is_array($correction)) {
+        continue;
+    }
 
-        $oldStarted = (int) ($correction['old_started_epoch'] ?? 0);
-        $oldEnded = (int) ($correction['old_ended_epoch'] ?? 0);
-        $newStarted = (int) ($correction['new_started_epoch'] ?? 0);
-        $newEnded = (int) ($correction['new_ended_epoch'] ?? 0);
-        $timezone = resultspack_weather_transfer_text(
-            $correction['timezone'] ?? ($session['timezone'] ?? 'UTC'),
+    $oldStarted =
+        (int) ($correction['old_started_epoch'] ?? 0);
+
+    $oldEnded =
+        (int) ($correction['old_ended_epoch'] ?? 0);
+
+    $newStarted =
+        (int) ($correction['new_started_epoch'] ?? 0);
+
+    $newEnded =
+        (int) ($correction['new_ended_epoch'] ?? 0);
+
+    $timezone =
+        resultspack_weather_transfer_text(
+            $correction['timezone']
+                ?? ($session['timezone'] ?? 'UTC'),
             64
         );
-        $reason = resultspack_weather_transfer_text($correction['reason'] ?? '', 2000);
 
-        if ($oldStarted <= 0 || $oldEnded <= 0 || $newStarted <= 0 || $newEnded <= 0) {
+    $reason =
+        resultspack_weather_transfer_text(
+            $correction['reason'] ?? '',
+            2000
+        );
+
+    if (
+        $oldStarted <= 0
+        || $oldEnded <= 0
+        || $newStarted <= 0
+        || $newEnded <= 0
+    ) {
+        continue;
+    }
+
+    $existingCorrection = safe_w_sql(
+        "SELECT CrwtcId " .
+        "FROM CustomResultsPackWeatherTimingCorrections " .
+        "WHERE CrwtcSession=" . (int) $sessionId . " " .
+        "AND CrwtcOldStartedEpoch=" . $oldStarted . " " .
+        "AND CrwtcOldEndedEpoch=" . $oldEnded . " " .
+        "AND CrwtcNewStartedEpoch=" . $newStarted . " " .
+        "AND CrwtcNewEndedEpoch=" . $newEnded . " " .
+        "AND CrwtcTimezone=" .
+        StrSafe_DB($timezone) . " " .
+        "AND CrwtcReason=" .
+        StrSafe_DB($reason) . " " .
+        "LIMIT 1"
+    );
+
+    if (safe_fetch($existingCorrection)) {
+        continue;
+    }
+
+    safe_w_sql(
+        "INSERT INTO CustomResultsPackWeatherTimingCorrections (" .
+        "CrwtcSession,CrwtcOldStartedEpoch,CrwtcOldEndedEpoch," .
+        "CrwtcNewStartedEpoch,CrwtcNewEndedEpoch,CrwtcTimezone," .
+        "CrwtcReason,CrwtcCreated" .
+        ") VALUES (" .
+        (int) $sessionId . "," .
+        $oldStarted . "," .
+        $oldEnded . "," .
+        $newStarted . "," .
+        $newEnded . "," .
+        StrSafe_DB($timezone) . "," .
+        StrSafe_DB($reason) . "," .
+        resultspack_weather_transfer_sql_datetime(
+            $correction['created'] ?? ''
+        ) .
+        ")"
+    );
+
+    $correctionsAdded++;
+}
+
+
+    //Import direction-reference correction audit history separately.
+    $directionCorrectionsReceived =
+    count($package['direction_corrections'] ?? array());
+    
+    $directionCorrectionsAdded = 0;
+
+    foreach (
+        ($package['direction_corrections'] ?? array())
+        as $directionCorrection
+    ) {
+        if (!is_array($directionCorrection)) {
             continue;
         }
 
-        $existingCorrection = safe_r_sql(
-            "SELECT CrwtcId FROM CustomResultsPackWeatherTimingCorrections " .
-            "WHERE CrwtcSession=" . $sessionId . " " .
-            "AND CrwtcOldStartedEpoch=" . $oldStarted . " " .
-            "AND CrwtcOldEndedEpoch=" . $oldEnded . " " .
-            "AND CrwtcNewStartedEpoch=" . $newStarted . " " .
-            "AND CrwtcNewEndedEpoch=" . $newEnded . " " .
-            "AND CrwtcTimezone=" . StrSafe_DB($timezone) . " " .
-            "AND CrwtcReason=" . StrSafe_DB($reason) . " " .
+        $oldCorrection =
+            isset($directionCorrection['old_correction'])
+            && is_numeric($directionCorrection['old_correction'])
+                ? (float) $directionCorrection['old_correction']
+                : 0.0;
+
+        $newCorrection =
+            isset($directionCorrection['new_correction'])
+            && is_numeric($directionCorrection['new_correction'])
+                ? (float) $directionCorrection['new_correction']
+                : 0.0;
+
+        $recordedBearing =
+            isset($directionCorrection['recorded_bearing'])
+            && is_numeric($directionCorrection['recorded_bearing'])
+                ? (float) $directionCorrection['recorded_bearing']
+                : null;
+
+        $verifiedBearing =
+            isset($directionCorrection['verified_bearing'])
+            && is_numeric($directionCorrection['verified_bearing'])
+                ? (float) $directionCorrection['verified_bearing']
+                : null;
+
+        $verification =
+            resultspack_weather_direction_verification(
+                $directionCorrection['verification']
+                    ?? 'unverified'
+            );
+
+        $reason =
+            resultspack_weather_transfer_text(
+                $directionCorrection['reason'] ?? '',
+                2000
+            );
+
+        if ($verifiedBearing === null) {
+            continue;
+        }
+
+        $existingDirectionCorrection = safe_w_sql(
+            "SELECT CrwdcId " .
+            "FROM CustomResultsPackWeatherDirectionCorrections " .
+            "WHERE CrwdcSession=" . (int) $sessionId . " " .
+            "AND CrwdcOldCorrection=" .
+            resultspack_weather_sql_number(
+                $oldCorrection
+            ) . " " .
+            "AND CrwdcNewCorrection=" .
+            resultspack_weather_sql_number(
+                $newCorrection
+            ) . " " .
+            "AND CrwdcVerifiedBearing=" .
+            resultspack_weather_sql_number(
+                $verifiedBearing
+            ) . " " .
+            "AND CrwdcVerification=" .
+            StrSafe_DB($verification) . " " .
+            "AND CrwdcReason=" .
+            StrSafe_DB($reason) . " " .
             "LIMIT 1"
         );
 
-        if (safe_fetch($existingCorrection)) {
+        if (safe_fetch($existingDirectionCorrection)) {
             continue;
         }
 
         safe_w_sql(
-            "INSERT INTO CustomResultsPackWeatherTimingCorrections (" .
-            "CrwtcSession,CrwtcOldStartedEpoch,CrwtcOldEndedEpoch," .
-            "CrwtcNewStartedEpoch,CrwtcNewEndedEpoch,CrwtcTimezone," .
-            "CrwtcReason,CrwtcCreated" .
+            "INSERT INTO CustomResultsPackWeatherDirectionCorrections (" .
+            "CrwdcSession,CrwdcOldCorrection,CrwdcNewCorrection," .
+            "CrwdcRecordedBearing,CrwdcVerifiedBearing," .
+            "CrwdcVerification,CrwdcReason,CrwdcCreated" .
             ") VALUES (" .
-            $sessionId . "," .
-            $oldStarted . "," .
-            $oldEnded . "," .
-            $newStarted . "," .
-            $newEnded . "," .
-            StrSafe_DB($timezone) . "," .
+            (int) $sessionId . "," .
+            resultspack_weather_sql_number(
+                $oldCorrection
+            ) . "," .
+            resultspack_weather_sql_number(
+                $newCorrection
+            ) . "," .
+            resultspack_weather_sql_number(
+                $recordedBearing
+            ) . "," .
+            resultspack_weather_sql_number(
+                $verifiedBearing
+            ) . "," .
+            StrSafe_DB($verification) . "," .
             StrSafe_DB($reason) . "," .
-            resultspack_weather_transfer_sql_datetime($correction['created'] ?? '') .
+            resultspack_weather_transfer_sql_datetime(
+                $directionCorrection['created'] ?? ''
+            ) .
             ")"
         );
 
-        $correctionsAdded++;
+        $directionCorrectionsAdded++;
     }
 
     safe_w_sql('COMMIT');
 
-    $quality = resultspack_weather_session_quality($sessionId);
+    $afterObservations =
+        resultspack_weather_transfer_observation_count(
+            $sessionId
+        );
+
+    $quality =
+        resultspack_weather_session_quality($sessionId);
 
     return array(
         'ok' => true,
@@ -3747,6 +4038,8 @@ function resultspack_weather_import_transfer_package(array $package, $requestedT
         'events_added' => $eventsAdded,
         'corrections_received' => count($package['timing_corrections'] ?? array()),
         'corrections_added' => $correctionsAdded,
+        'direction_corrections_received' => count($package['direction_corrections'] ?? array()),
+        'direction_corrections_added' => $directionCorrectionsAdded,
         'quality' => $quality,
         'warning' => $warning,
     );

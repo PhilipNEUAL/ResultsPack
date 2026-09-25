@@ -114,6 +114,10 @@ echo '<tr><td class="Bold">Timing-correction audit rows</td><td>'
     . (int) $preview['timing_corrections']
     . '</td></tr>';
 
+echo '<tr><td class="Bold">Direction-reference audit rows</td><td>'
+    . (int) $preview['direction_corrections']
+    . '</td></tr>';
+
 echo '<tr><td colspan="2">';
 
 echo '<form method="post" action="WeatherSessionDeleteAction.php">';

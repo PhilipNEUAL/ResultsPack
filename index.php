@@ -59,9 +59,9 @@ $defaultIssueDate = date('Y-m-d');
 $PAGE_TITLE = 'Complete Results Pack';
 $IncludeJquery = true;
 $JS_SCRIPT = array(
-    '<link rel="stylesheet" href="assets/results-pack.css?v=1.0.4" type="text/css">',
-    '<script src="assets/results-pack.js?v=form-settings-1"></script>',
-    '<script src="assets/input-limits.js?v=1"></script>',    
+    '<link rel="stylesheet" href="assets/results-pack.css?v=1.0.2" type="text/css">',
+    '<script src="assets/results-pack.js?v=1.0.2"></script>',
+    '<script src="assets/input-limits.js?v=1.0.2"></script>',
 );
 include('Common/Templates/head.php');
 

@@ -59,14 +59,14 @@ $defaultIssueDate = date('Y-m-d');
 $PAGE_TITLE = 'Complete Results Pack';
 $IncludeJquery = true;
 $JS_SCRIPT = array(
-    '<link rel="stylesheet" href="assets/results-pack.css?v=1.0.2" type="text/css">',
-    '<script src="assets/results-pack.js?v=1.0.2"></script>',
-    '<script src="assets/input-limits.js?v=1.0.2"></script>',
+    '<link rel="stylesheet" href="assets/results-pack.css?v=1.0.3" type="text/css">',
+    '<script src="assets/results-pack.js?v=1.0.3"></script>',
+    '<script src="assets/input-limits.js?v=1.0.3"></script>',
 );
 include('Common/Templates/head.php');
 
 echo '<table class="Tabella freeWidth resultspack-intro">';
-echo '<tr><th class="Main">Complete Results Pack - 1.0.2</th></tr>';
+echo '<tr><th class="Main">Complete Results Pack - 1.0.3</th></tr>';
 echo '</table>';
 
 echo '<form method="get" action="index.php">';

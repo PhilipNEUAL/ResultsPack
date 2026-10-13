@@ -1,5 +1,5 @@
 # ResultsPack
-Version **1.0.1** is the first minor fix to the first public release.
+Version **1.0.3** adds optional integration for ArcheryWeather module, save feedback, form reset, text limits, and indoor event detection.
 
 ResultsPack is an independent module for [IANSEO](https://www.ianseo.net/) that allows Tournament Organisers to build a complete results sheet, complying with the requirements of ArcheryGB Record Status.
 

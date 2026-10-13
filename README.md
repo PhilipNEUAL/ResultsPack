@@ -1,5 +1,5 @@
 # ResultsPack
-Version **1.0.3** is the first minor fix to the first public release.
+Version **1.0.1** is the first minor fix to the first public release.
 
 ResultsPack is an independent module for [IANSEO](https://www.ianseo.net/) that allows Tournament Organisers to build a complete results sheet, complying with the requirements of ArcheryGB Record Status.
 
@@ -78,5 +78,4 @@ Before removing a module, please remember to back up your competitions. Deleting
 ResultsPack is developed and maintained by Philip Taylor. Bug reports and other gripes are very welcome.
 
 - I am working on allowing the tool to combine results across multiple events. This is currently in prototype and does not work consistently or correctly. For now, please just select one competition.
-- Indoor detection is not yet reliable, please let me know if you spot an incorrectly detected round.
 - IANSEO PDF generator/other dependencies may change between IANSEO releases. This tool is liable to break if that happens.

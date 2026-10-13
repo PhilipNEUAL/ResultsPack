@@ -1,6 +1,7 @@
 <?php
 require_once(__DIR__ . '/Lib/bootstrap.php');
 require_once(__DIR__ . '/Lib/pdf.php');
+require_once(__DIR__ . '/Lib/archeryweather.php');
 
 function resultspack_builder_textarea($name, $value, $resettable = false, $compact = false)
 {
@@ -30,6 +31,24 @@ $defaultOrganiserName = $first ? $first['organiser'] : '';
 $defaultIndividualSource = $nativeIndividualEvents ? 'events' : 'divclass';
 $detectedFinalCount = (int) (($finalEvents['counts']['individual'] ?? 0) + ($finalEvents['counts']['team'] ?? 0));
 $detectedIndoor = resultspack_is_indoor_selection($selectedTournaments);
+
+    $defaultWeatherTemperature = '';
+    $defaultWeatherHumidity = '';
+    $defaultWeatherWindSpeed = '';
+    $defaultWeatherNotes = '';
+    $archeryWeather = array(
+        'sessions' => array(),
+        'message' => '',
+    );
+
+    if ($count === 1) {
+        $weatherTournamentIds = array_keys($selectedTournaments);
+
+        $archeryWeather = resultspack_archeryweather_sessions(
+            (int) $weatherTournamentIds[0]
+        );
+    }
+
 $storageKey = 'ianseo-results-pack-v1-' . implode('-', array_keys($selectedTournaments));
 $legacyStorageKey = 'ianseo-results-pack-draft6-2-' . implode('-', array_keys($selectedTournaments));
 $settingsKey = $selectedTournaments ? resultspack_settings_key(array_keys($selectedTournaments)) : '';
@@ -40,13 +59,14 @@ $defaultIssueDate = date('Y-m-d');
 $PAGE_TITLE = 'Complete Results Pack';
 $IncludeJquery = true;
 $JS_SCRIPT = array(
-    '<link rel="stylesheet" href="assets/results-pack.css?v=1.0.2" type="text/css">',
-    '<script src="assets/results-pack.js?v=1.0.2"></script>',
+    '<link rel="stylesheet" href="assets/results-pack.css?v=1.0.3" type="text/css">',
+    '<script src="assets/results-pack.js?v=1.0.3"></script>',
+    '<script src="assets/input-limits.js?v=1.0.3"></script>',
 );
 include('Common/Templates/head.php');
 
 echo '<table class="Tabella freeWidth resultspack-intro">';
-echo '<tr><th class="Main">Complete Results Pack - 1.0.2</th></tr>';
+echo '<tr><th class="Main">Complete Results Pack - 1.0.3</th></tr>';
 echo '</table>';
 
 echo '<form method="get" action="index.php">';
@@ -72,6 +92,19 @@ if ($selectedTournaments) {
         echo '<input type="hidden" name="ToIds[]" value="' . (int) $id . '">';
     }
     echo '<input type="hidden" name="csrf_token" value="' . resultspack_h(resultspack_csrf_token()) . '">';
+    echo '<input type="hidden" id="resultspack-text-limits" value="'
+        . resultspack_h(
+            json_encode(
+                resultspack_text_limits(),
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+            )
+        )
+        . '">';    
+    echo '<input type="hidden" name="settings_generation" value="'
+        . (int) (
+            $_SESSION['ResultsPackSettingsGeneration'][$settingsKey] ?? 0
+        )
+        . '">';
     echo '<table class="Tabella freeWidth resultspack-form">';
     echo '<tr><th class="Main" colspan="2">2. Cover page and report contents</th></tr>';
     echo '<tr><th class="Title" style="width:28%">Field</th><th class="Title">Value</th></tr>';
@@ -112,21 +145,79 @@ if ($selectedTournaments) {
     echo '<label>E-mail address<input type="email" name="organiser_email" value=""></label>';
     echo '</div></td></tr>';
 
-    echo '<tr><td class="Bold">(f) Weather conditions</td><td>';
-    echo '<label class="resultspack-indoor-toggle"><input type="checkbox" name="weather_indoor" value="1" id="resultspack-weather-indoor"' . ($detectedIndoor ? ' checked' : '') . '> Indoor event - print “N/A - indoors.”</label>';
+    echo '<tr><td class="Bold">(f) Weather / environmental conditions</td><td>';
+
+    if ($archeryWeather['message'] !== '') {
+        echo '<p class="resultspack-muted">'
+            . resultspack_h($archeryWeather['message'])
+            . '</p>';
+    }
+
+    if ($archeryWeather['sessions']) {
+        echo '<div style="margin-bottom:12px;">';
+
+        echo '<label for="resultspack-archeryweather-session">'
+            . 'ArcheryWeather session'
+            . '</label> ';
+
+        echo '<select id="resultspack-archeryweather-session" '
+            . 'data-resultspack-no-save="1">';
+
+        echo '<option value="">Choose a completed session</option>';
+
+        foreach ($archeryWeather['sessions'] as $weatherSession) {
+            $label = $weatherSession['label'];
+
+            echo '<option value="'
+                . (int) $weatherSession['id']
+                . '">'
+                . resultspack_h($label)
+                . '</option>';
+        }
+        echo '</select> ';
+
+        echo '<button type="button" class="Button" '
+            . 'id="resultspack-use-archeryweather" '
+            . 'data-tournament-id="'
+            . (int) $weatherTournamentIds[0]
+            . '">'
+            . 'Use ArcheryWeather summary'
+            . '</button>';
+
+        echo '<p id="resultspack-archeryweather-feedback" '
+            . 'role="status" aria-live="polite"></p>';
+
+        echo '</div>';
+    }
+
+    echo '<label class="resultspack-indoor-toggle">';
+    echo '<input type="checkbox" name="weather_indoor" value="1" id="resultspack-weather-indoor" data-resultspack-no-save="1"' . ($detectedIndoor ? ' checked' : '') . '> Indoor event';
+    echo '</label>';
+
+    $defaultIndoorNoData = $detectedIndoor;
+
+    echo '<label class="resultspack-indoor-toggle" id="resultspack-weather-indoor-na-wrap"' .
+        ($detectedIndoor ? '' : ' style="display:none;"') . '>';
+
+    echo '<input type="checkbox" name="weather_indoor_na" value="1" id="resultspack-weather-indoor-na"' .
+        ($defaultIndoorNoData ? ' checked' : '') .
+        '> No environmental data available - print “N/A - indoors.”';
+
+    echo '</label>';
+
     echo '<div class="resultspack-outdoor-weather">';
     echo '<div class="resultspack-weather-conditions">';
-    foreach (array('Sunny', 'Overcast', 'Windy', 'Rain', 'Snow') as $condition) {
-        echo '<label><input type="checkbox" name="weather_conditions[]" value="' . resultspack_h($condition) . '"> ' . resultspack_h($condition) . '</label>';
-    }
+        foreach (array('Sunny', 'Overcast', 'Windy', 'Rain', 'Snow') as $condition) {
+            echo '<label><input type="checkbox" name="weather_conditions[]" value="' . resultspack_h($condition) . '"> ' . resultspack_h($condition) . '</label>';
+        }
     echo '</div>';
     echo '<div class="resultspack-weather-grid">';
-    echo '<label>Temperature (°C)<input type="number" step="0.1" name="weather_temperature"></label>';
-    echo '<label>Humidity (%)<input type="number" min="0" max="100" step="1" name="weather_humidity"></label>';
-    echo '<label>Wind speed<input type="number" min="0" step="0.1" name="weather_wind_speed"></label>';
-    echo '<label>Wind unit<select name="weather_wind_unit"><option value="mph" selected>mph</option><option value="kmh">km/h</option><option value="ms">m/s</option></select></label>';
+    echo '<label>Temperature (°C)<input type="number" step="0.1" name="weather_temperature" value="' . resultspack_h($defaultWeatherTemperature) . '"></label>';
+    echo '<label>Humidity (%)<input type="number" min="0" max="100" step="1" name="weather_humidity" value="' . resultspack_h($defaultWeatherHumidity) . '"></label>';
+    echo '<label>Wind speed<input type="number" min="0" step="0.1" name="weather_wind_speed" value="' . resultspack_h($defaultWeatherWindSpeed) . '"></label>';
+    echo '<label>Wind unit<select name="weather_wind_unit"><option value="kmh" selected>km/h</option><option value="mph">mph</option><option value="ms">m/s</option></select></label>';
     echo '</div>';
-    echo '<label>Additional weather notes<textarea name="weather_notes" rows="1" class="resultspack-autogrow" placeholder="Optional free-text observations"></textarea></label>';
+    echo '<label>Additional environmental notes<textarea name="weather_notes" rows="1" class="resultspack-autogrow" placeholder="Optional free-text observations">' . resultspack_h($defaultWeatherNotes) . '</textarea></label>';
     echo '</div></td></tr>';
 
     echo '<tr><td class="Bold">(g) Tabular list of each archer’s performance</td><td>';

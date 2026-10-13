@@ -137,7 +137,10 @@ function resultspack_organiser_text($name, $email)
 
 function resultspack_weather_text($source)
 {
-    if (!empty($source['weather_indoor'])) {
+    $indoor = !empty($source['weather_indoor']);
+    $indoorNoData = !empty($source['weather_indoor_na']);
+
+    if ($indoor && $indoorNoData) {
         return 'Indoor event. N/A - indoors.';
     }
 
@@ -147,6 +150,11 @@ function resultspack_weather_text($source)
         $conditions = array($conditions);
     }
     $parts = array();
+
+    if ($indoor) {
+        $parts[] = 'Indoor event';
+    }
+
     foreach ($allowed as $condition) {
         if (in_array($condition, $conditions, true)) {
             $parts[] = $condition;
@@ -167,8 +175,8 @@ function resultspack_weather_text($source)
     $windSpeed = resultspack_normalise_whitespace($source['weather_wind_speed'] ?? '');
     if ($windSpeed !== '' && is_numeric($windSpeed)) {
         $units = array('mph' => 'mph', 'kmh' => 'km/h', 'ms' => 'm/s');
-        $unitKey = strtolower(resultspack_normalise_whitespace($source['weather_wind_unit'] ?? 'mph'));
-        $parts[] = 'Wind speed: ' . (0 + $windSpeed) . ' ' . ($units[$unitKey] ?? 'mph');
+        $unitKey = strtolower(resultspack_normalise_whitespace($source['weather_wind_unit'] ?? 'kmh'));
+        $parts[] = 'Wind speed: ' . (0 + $windSpeed) . ' ' . ($units[$unitKey] ?? 'km/h');
     }
 
     $notes = resultspack_normalise_whitespace($source['weather_notes'] ?? '');

@@ -9,6 +9,19 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !resultspack_validate_csrf($_POST['
     exit;
 }
 
+$textLimitError = resultspack_text_limit_error($_POST);
+
+if ($textLimitError !== null) {
+    http_response_code(422);
+    header('Content-Type: text/plain; charset=UTF-8');
+
+    echo $textLimitError
+        . "\n\nReturn to the builder tab to correct the field. "
+        . 'Your entered text is still there.';
+
+    exit;
+}
+
 $selectedIds = resultspack_selected_tournament_ids($_POST);
 if (!$selectedIds) {
     http_response_code(400);

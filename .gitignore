@@ -1,0 +1,15 @@
+# Release ZIPs
+/ResultsPack-*.ZIP
+
+# Release files
+/release-build/
+
+# TEMPEST (secret)
+/WeatherConfig.local.php
+
+# VS Code workspace settings
+/.vscode/settings.json
+
+# Temporary weather debugging logs
+/TempestTestDebug.txt
+/WeatherSessionEditDebug.txt

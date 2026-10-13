@@ -16,6 +16,7 @@ if (!resultspack_validate_csrf($_POST['csrf_token'] ?? '')) {
 $action = strtolower(resultspack_normalise_whitespace($_POST['action'] ?? ''));
 $key = resultspack_normalise_whitespace($_POST['key'] ?? '');
 $ok = false;
+$error = '';
 
 try {
     if ($action === 'add') {
@@ -35,6 +36,26 @@ try {
     }
 } catch (Exception $e) {
     $ok = false;
+
+    if ($e instanceof InvalidArgumentException) {
+        http_response_code(422);
+        $error = $e->getMessage();
+    } else {
+        http_response_code(500);
+        $error = 'The award library could not be updated. Please try again.';
+    }
+}
 }
 
-echo json_encode(array('ok' => (bool) $ok, 'key' => $key), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+echo json_encode(
+    array(
+        'ok' => (bool) $ok,
+        'key' => $key,
+        'error' => $ok
+            ? ''
+            : ($error !== ''
+                ? $error
+                : 'The award library update was not accepted.'),
+    ),
+    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+);

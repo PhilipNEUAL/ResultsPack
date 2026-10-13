@@ -71,6 +71,42 @@ if ($action === 'reset') {
         resultspack_settings_reply(400, array('ok' => false, 'error' => 'The form settings could not be read. Copy unsaved text and reload the builder.'));
     }
 
+    $textValues = array();
+
+    foreach ($decoded['fields'] as $name => $state) {
+        if (resultspack_text_limit_for((string) $name) === null) {
+            continue;
+        }
+
+        if (
+            !is_array($state)
+            || ($state['type'] ?? null) !== 'value'
+            || !array_key_exists('value', $state)
+        ) {
+            resultspack_settings_reply(
+                400,
+                array(
+                    'ok' => false,
+                    'error' => 'A saved text field is invalid. Reload the builder.',
+                )
+            );
+        }
+
+        $textValues[$name] = $state['value'];
+    }
+
+    $textLimitError = resultspack_text_limit_error($textValues);
+
+    if ($textLimitError !== null) {
+        resultspack_settings_reply(
+            422,
+            array(
+                'ok' => false,
+                'error' => $textLimitError,
+            )
+        );
+    }
+
     if (strlen($json) > 262144) {
         resultspack_settings_reply(413, array('ok' => false, 'error' => 'The form exceeds the 256 KiB saved-settings limit. Shorten large pasted text or reset this form.'));
     }

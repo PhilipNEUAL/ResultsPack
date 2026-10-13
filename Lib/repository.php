@@ -609,6 +609,19 @@ function resultspack_add_award_library_item($kind = 'award')
 
 function resultspack_update_award_library_item($key, array $values)
 {
+        $textLimitError = resultspack_text_limit_error(
+        array(
+            'award_definition_name_check' => $values['name'] ?? '',
+            'award_definition_description_check' =>
+                $values['description'] ?? '',
+            'award_definition_category_check' =>
+                $values['category'] ?? '',
+        )
+    );
+
+    if ($textLimitError !== null) {
+        throw new InvalidArgumentException($textLimitError);
+    }
     resultspack_ensure_awards_table();
     $key = resultspack_normalise_whitespace($key);
     if (strpos($key, 'custom:') !== 0) return false;

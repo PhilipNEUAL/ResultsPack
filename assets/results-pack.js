@@ -551,11 +551,23 @@
         return fetch('AwardLibrary.php',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:body,credentials:'same-origin'})
             .then(function(response){return response.json();})
             .then(function(result){
-                if(!result||!result.ok)throw new Error('Award library update failed');
+                if(!result||!result.ok){
+                    throw new Error(
+                        result&&result.error
+                            ? result.error
+                            : 'The award library update failed.'
+                    );
+                }
                 if(refreshAfter)return refreshAwardLibrary(result.key||data.key||'',data.action||'',data.direction||'',data.kind||'');
                 return result;
             })
-            .catch(function(){window.alert('The custom award library could not be updated. Please try again.');});
+            .catch(function(error){
+                window.alert(
+                    'The custom award library could not be updated.\n\n'
+                    + error.message
+                    + '\n\nYour entered text is still visible. Correct it before reloading.'
+                );
+            });
     }
 
     function awardRow(target){return target&&target.closest?target.closest('[data-award-key]'):null;}

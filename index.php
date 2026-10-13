@@ -61,6 +61,7 @@ $IncludeJquery = true;
 $JS_SCRIPT = array(
     '<link rel="stylesheet" href="assets/results-pack.css?v=1.0.4" type="text/css">',
     '<script src="assets/results-pack.js?v=form-settings-1"></script>',
+    '<script src="assets/input-limits.js?v=1"></script>',    
 );
 include('Common/Templates/head.php');
 
@@ -91,6 +92,14 @@ if ($selectedTournaments) {
         echo '<input type="hidden" name="ToIds[]" value="' . (int) $id . '">';
     }
     echo '<input type="hidden" name="csrf_token" value="' . resultspack_h(resultspack_csrf_token()) . '">';
+    echo '<input type="hidden" id="resultspack-text-limits" value="'
+        . resultspack_h(
+            json_encode(
+                resultspack_text_limits(),
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+            )
+        )
+        . '">';    
     echo '<input type="hidden" name="settings_generation" value="'
         . (int) (
             $_SESSION['ResultsPackSettingsGeneration'][$settingsKey] ?? 0

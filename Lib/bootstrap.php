@@ -5,6 +5,7 @@ if (!defined('RESULTSPACK_MODULE_ROOT')) {
 require_once(dirname(dirname(dirname(dirname(dirname(__FILE__))))) . '/config.php');
 require_once('Common/Fun_FormatText.inc.php');
 require_once(__DIR__ . '/format.php');
+require_once(__DIR__ . '/input_limits.php');
 require_once(__DIR__ . '/repository.php');
 require_once(__DIR__ . '/combined.php');
 require_once(__DIR__ . '/teams.php');

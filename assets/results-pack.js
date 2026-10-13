@@ -212,33 +212,146 @@
         return data;
     }
 
-    function persistServer(form,payload,immediate){
-        var settingsKey=form.getAttribute('data-settings-key')||'';
-        if(!settingsKey)return;
-        var csrf=form.elements['csrf_token']?form.elements['csrf_token'].value:'';
-        var body='key='+encodeURIComponent(settingsKey)+'&payload='+encodeURIComponent(payload)+'&csrf_token='+encodeURIComponent(csrf);
-        if(immediate&&navigator.sendBeacon){
-            try{
-                var fd=new FormData();
-                fd.append('key',settingsKey);
-                fd.append('payload',payload);
-                fd.append('csrf_token',csrf);
-                navigator.sendBeacon('SaveSettings.php',fd);
-                return;
-            }catch(e){}
+    // Only one settings request runs at a time; later edits replace queued ones.
+    var settingsPending=null;
+    var settingsActive=null;
+    var settingsResetting=false;
+    var settingsLocalSaved=false;
+    var settingsLastSaved=null;
+
+    function settingsMessage(form,text,error){
+        var status=form.querySelector('[data-settings-status]');
+        if(status){
+            status.textContent=text;
+            status.style.color=error?'#a12622':'#245b2a';
         }
+    }
+
+    async function settingsRequest(form,action,payload){
+        var body=new URLSearchParams();
+        body.set('key',form.getAttribute('data-settings-key')||'');
+        body.set('csrf_token',form.elements['csrf_token'].value);
+        body.set('generation',form.elements['settings_generation']?form.elements['settings_generation'].value:'');
+        body.set('action',action);
+        if(action==='save')body.set('payload',payload);
+        var controller=new AbortController();
+        var timeout=window.setTimeout(function(){controller.abort();},15000);
+        try{
+            var response=await fetch('SaveSettings.php',{
+                method:'POST',
+                credentials:'same-origin',
+                cache:'no-store',
+                body:body,
+                signal:controller.signal
+            });
+            var data;
+            try{data=await response.json();}
+            catch(error){throw new Error('The server returned an unexpected response (HTTP '+response.status+'). Check that IANSEO is running and your session is still active.');}
+            if(!response.ok||!data.ok)throw new Error(data.error||'The server did not confirm the save (HTTP '+response.status+').');
+            return data;
+        }catch(error){
+            if(error.name==='AbortError')throw new Error('The server did not confirm within 15 seconds. Check the connection and try again.');
+            if(error instanceof TypeError)throw new Error('Cannot reach IANSEO. Check your network connection and that the server is running.');
+            throw error;
+        }finally{window.clearTimeout(timeout);}
+    }
+
+    function drainSettings(){
+        if(settingsActive||settingsResetting||!settingsPending)return;
+        var job=settingsPending;
+        settingsPending=null;
+        settingsMessage(job.form,'Saving to IANSEO…',false);
+        settingsActive=settingsRequest(job.form,'save',job.payload)
+            .then(function(){
+                settingsLastSaved=job.payload;
+                if(!settingsResetting&&!settingsPending&&JSON.stringify({version:2,fields:serialiseForm(job.form)})===job.payload){
+                    settingsMessage(job.form,settingsLocalSaved
+                        ?'Saved to IANSEO and this browser.'
+                        :'Saved to IANSEO. Browser storage is unavailable or full.',false);
+                }
+            })
+            .catch(function(error){
+                if(!settingsResetting&&!settingsPending&&JSON.stringify({version:2,fields:serialiseForm(job.form)})===job.payload){
+                    settingsMessage(job.form,'Could not confirm saving to IANSEO. '+error.message+' '+(settingsLocalSaved
+                        ?'A browser copy was saved, but reloading may restore older server settings. Keep this page open or copy your text.'
+                        :'No browser backup was saved either. Keep this page open and copy your text.'),true);
+                }
+            })
+            .finally(function(){
+                settingsActive=null;
+                if(settingsPending&&!settingsResetting)drainSettings();
+            });
+    }
+
+    function persistServer(form,payload,immediate){
+        if(settingsResetting||!form.getAttribute('data-settings-key'))return;
         if(serverSaveTimer)window.clearTimeout(serverSaveTimer);
-        serverSaveTimer=window.setTimeout(function(){
-            try{
-                fetch('SaveSettings.php',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:body,credentials:'same-origin'}).catch(function(){});
-            }catch(e){}
-        },immediate?0:350);
+        settingsPending={form:form,payload:payload};
+        if(immediate){drainSettings();}
+        else{serverSaveTimer=window.setTimeout(drainSettings,350);}
     }
 
     function saveForm(form,key,immediate){
+        if(settingsResetting)return;
         var payload=JSON.stringify({version:2,fields:serialiseForm(form)});
-        try{localStorage.setItem(key,payload);}catch(e){}
+        settingsLocalSaved=false;
+        try{localStorage.setItem(key,payload);settingsLocalSaved=true;}catch(error){}
+        // Match the server's existing limit using UTF-8 bytes, not characters.
+        if(new Blob([payload]).size>262144){
+            settingsPending=null;
+            if(serverSaveTimer)window.clearTimeout(serverSaveTimer);
+            settingsMessage(form,'Could not save to IANSEO: this form exceeds the 256 KiB limit. Shorten large pasted text or use Advanced → Reset this form. '+(settingsLocalSaved?'A browser copy was saved; do not rely on a reload to recover it.':'Browser storage also failed; keep this page open and copy any text you need.'),true);
+            return;
+        }
+        settingsMessage(form,'Changes waiting to be saved…',false);
         persistServer(form,payload,!!immediate);
+    }
+
+    function installSettingsControls(form,key){
+        var panel=document.createElement('div');
+        panel.style.cssText='padding:10px;margin:10px 0;border:1px solid #ccc;';
+        panel.innerHTML='<p data-settings-status role="status" aria-live="polite">Changes are saved automatically.</p>'
+            +'<button type="button" class="Button" data-settings-retry>Save now / Retry</button>'
+            +'<details style="margin-top:12px"><summary>Advanced</summary>'
+            +'<p>Reset this results-pack form to its initial defaults for the current competition selection. '
+            +'This discards saved text and selections, including award recipients. '
+            +'Competition results, weather records and custom-award definitions are kept. '
+            +'Other users of this same competition selection will see the reset settings when they reload.</p>'
+            +'<button type="button" class="Button" data-settings-reset>Reset this form</button></details>';
+        form.appendChild(panel);
+        panel.querySelector('[data-settings-retry]').addEventListener('click',function(){saveForm(form,key,true);});
+        panel.querySelector('[data-settings-reset]').addEventListener('click',async function(){
+            if(settingsResetting)return;
+            if(!window.confirm('Discard the saved text and selections for this results-pack form and start again with defaults? Competition data and award definitions will be kept.'))return;
+            settingsResetting=true;
+            settingsPending=null;
+            if(serverSaveTimer)window.clearTimeout(serverSaveTimer);
+            var disabled=Array.from(form.elements).map(function(control){return [control,control.disabled];});
+            disabled.forEach(function(pair){pair[0].disabled=true;});
+            settingsMessage(form,'Resetting this form…',false);
+            try{
+                // Let an already-started save finish before sending the reset.
+                if(settingsActive)await settingsActive;
+                var result=await settingsRequest(form,'reset','');
+                if(form.elements['settings_generation'])form.elements['settings_generation'].value=String(result.generation);
+                try{
+                    localStorage.setItem(key,JSON.stringify({version:2,fields:{}}));
+                    var legacy=form.getAttribute('data-legacy-storage-key');
+                    if(legacy)localStorage.removeItem(legacy);
+                }catch(error){}
+                // Prevent pagehide from saving the discarded values on reload.
+                window.location.reload();
+            }catch(error){
+                settingsResetting=false;
+                disabled.forEach(function(pair){pair[0].disabled=pair[1];});
+                settingsMessage(form,'The reset could not be confirmed. '+error.message+' No reload was performed; your current text is still visible.',true);
+            }
+        });
+        window.addEventListener('beforeunload',function(event){
+            if(settingsResetting)return;
+            var payload=JSON.stringify({version:2,fields:serialiseForm(form)});
+            if(payload!==settingsLastSaved){event.preventDefault();event.returnValue='';}
+        });
     }
 
     function restoreLegacyForm(form,saved){
@@ -533,6 +646,8 @@
         if(!form){refreshUi();return;}
         var key=form.getAttribute('data-storage-key')||'ianseo-results-pack';
         restoreForm(form,key);
+        settingsLastSaved=JSON.stringify({version:2,fields:serialiseForm(form)});
+        installSettingsControls(form,key);
         refreshUi();
         resizeAllAutoGrow();
 
@@ -560,7 +675,7 @@
         var saveSoon=function(){saveForm(form,key);};
         form.addEventListener('input',saveSoon);
         form.addEventListener('change',saveSoon);
-        window.addEventListener('pagehide',function(){saveForm(form,key,true);});
+        // Save while the page is active; beforeunload warns about unconfirmed changes.
 
         form.addEventListener('submit',function(event){
             var sectionNames=['include_cover','include_individuals','include_teams','include_finals'];

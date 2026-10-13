@@ -60,7 +60,7 @@ $PAGE_TITLE = 'Complete Results Pack';
 $IncludeJquery = true;
 $JS_SCRIPT = array(
     '<link rel="stylesheet" href="assets/results-pack.css?v=1.0.4" type="text/css">',
-    '<script src="assets/results-pack.js?v=archeryweather-1"></script>',
+    '<script src="assets/results-pack.js?v=form-settings-1"></script>',
 );
 include('Common/Templates/head.php');
 
@@ -91,6 +91,11 @@ if ($selectedTournaments) {
         echo '<input type="hidden" name="ToIds[]" value="' . (int) $id . '">';
     }
     echo '<input type="hidden" name="csrf_token" value="' . resultspack_h(resultspack_csrf_token()) . '">';
+    echo '<input type="hidden" name="settings_generation" value="'
+        . (int) (
+            $_SESSION['ResultsPackSettingsGeneration'][$settingsKey] ?? 0
+        )
+        . '">';
     echo '<table class="Tabella freeWidth resultspack-form">';
     echo '<tr><th class="Main" colspan="2">2. Cover page and report contents</th></tr>';
     echo '<tr><th class="Title" style="width:28%">Field</th><th class="Title">Value</th></tr>';

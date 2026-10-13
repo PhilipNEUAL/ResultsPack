@@ -149,7 +149,7 @@ if ($selectedTournaments) {
         echo '<select id="resultspack-archeryweather-session" '
             . 'data-resultspack-no-save="1">';
 
-        echo '<option value="">Choose a completed Real session…</option>';
+        echo '<option value="">Choose a completed session</option>';
 
         foreach ($archeryWeather['sessions'] as $weatherSession) {
             $label = $weatherSession['label'];
@@ -160,7 +160,6 @@ if ($selectedTournaments) {
                 . resultspack_h($label)
                 . '</option>';
         }
-
         echo '</select> ';
 
         echo '<button type="button" class="Button" '
@@ -170,12 +169,6 @@ if ($selectedTournaments) {
             . '">'
             . 'Use ArcheryWeather summary'
             . '</button>';
-
-        echo '<p class="resultspack-muted">'
-            . 'Replaces the environmental notes and humidity using this session. '
-            . 'Clears the separate temperature and wind values because '
-            . 'they are included in the summary. You can edit the result.'
-            . '</p>';
 
         echo '<p id="resultspack-archeryweather-feedback" '
             . 'role="status" aria-live="polite"></p>';

@@ -45,7 +45,6 @@ try {
         $error = 'The award library could not be updated. Please try again.';
     }
 }
-}
 
 echo json_encode(
     array(

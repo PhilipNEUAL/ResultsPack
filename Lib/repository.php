@@ -18,7 +18,7 @@ function resultspack_selected_tournament_ids($source)
 function resultspack_fetch_tournament_list()
 {
     $result = safe_r_sql(
-        "SELECT ToId, ToType, ToCode, ToName, ToNameShort, ToWhere, ToVenue, ToWhenFrom, ToWhenTo, ToNumDist, ToGolds, ToXNine, ToTypeName, ToComDescr\n" .
+        "SELECT ToId, ToType, ToCategory, ToCode, ToName, ToNameShort, ToWhere, ToVenue, ToWhenFrom, ToWhenTo, ToNumDist, ToGolds, ToXNine, ToTypeName, ToComDescr\n" .
         "FROM Tournament\n" .
         "ORDER BY ToWhenFrom DESC, ToName, ToId DESC"
     );
@@ -27,6 +27,7 @@ function resultspack_fetch_tournament_list()
         $rows[] = array(
             'id' => (int) $row->ToId,
             'type' => (int) $row->ToType,
+            'category' => (int) $row->ToCategory,            
             'code' => (string) $row->ToCode,
             'name' => (string) $row->ToName,
             'short_name' => (string) $row->ToNameShort,
@@ -51,7 +52,7 @@ function resultspack_fetch_selected_tournaments(array $ids)
     }
     $idList = implode(',', array_map('intval', $ids));
     $result = safe_r_sql(
-        "SELECT ToId, ToType, ToCode, ToName, ToNameShort, ToWhere, ToVenue, ToWhenFrom, ToWhenTo, ToNumDist, ToGolds, ToXNine, ToTypeName, ToComDescr\n" .
+        "SELECT ToId, ToType, ToCategory, ToCode, ToName, ToNameShort, ToWhere, ToVenue, ToWhenFrom, ToWhenTo, ToNumDist, ToGolds, ToXNine, ToTypeName, ToComDescr\n" .
         "FROM Tournament\n" .
         "WHERE ToId IN ($idList)\n" .
         "ORDER BY ToWhenFrom, ToName, ToId"
@@ -62,6 +63,7 @@ function resultspack_fetch_selected_tournaments(array $ids)
         $rows[$id] = array(
             'id' => $id,
             'type' => (int) $row->ToType,
+            'category' => (int) $row->ToCategory,
             'code' => (string) $row->ToCode,
             'name' => (string) $row->ToName,
             'short_name' => (string) $row->ToNameShort,
@@ -351,47 +353,6 @@ function resultspack_selected_team_event_codes($source)
     return resultspack_selected_event_codes($source, 'team_event_codes');
 }
 
-
-function resultspack_is_indoor_tournament(array $tournament)
-{
-    $parts = array(
-        $tournament['name'] ?? '',
-        $tournament['short_name'] ?? '',
-        $tournament['type_name'] ?? '',
-    );
-    foreach (($tournament['distance_summaries'] ?? array()) as $summary) {
-        $parts[] = $summary;
-    }
-    $haystack = function_exists('mb_strtolower')
-        ? mb_strtolower(implode(' ', $parts), 'UTF-8')
-        : strtolower(implode(' ', $parts));
-    $normalised = preg_replace('/[^a-z0-9]+/', ' ', $haystack);
-    $normalised = trim(preg_replace('/\s+/', ' ', $normalised));
-
-    $indoorNeedles = array(
-        'bray 1',
-        'bray 2',
-        'stafford',
-        'portsmouth',
-        'worcester',
-        'vegas 300',
-        'las vegas',
-        'wa18m',
-        'wa 18m',
-        'wa25m',
-        'wa 25m',
-        'wa combined',
-        'wa vi indoor',
-    );
-    foreach ($indoorNeedles as $needle) {
-        $needleNormalised = trim(preg_replace('/\s+/', ' ', preg_replace('/[^a-z0-9]+/', ' ', strtolower($needle))));
-        if ($needleNormalised !== '' && strpos($normalised, $needleNormalised) !== false) {
-            return true;
-        }
-    }
-    return false;
-}
-
 function resultspack_is_indoor_selection(array $tournaments)
 {
     if (!$tournaments) {
@@ -403,6 +364,13 @@ function resultspack_is_indoor_selection(array $tournaments)
         }
     }
     return true;
+}
+
+// Use IANSEO's tournament category rather than competition names. Category 2 identifies an indoor tournament.
+function resultspack_is_indoor_tournament(array $tournament)
+{
+    return isset($tournament['category'])
+        && (int) $tournament['category'] === 2;
 }
 
 function resultspack_fetch_final_events(array $tournaments)

@@ -11,33 +11,10 @@ $buildResults =
     . $CFG->ROOT_DIR
     . 'Modules/Custom/ResultsPack/';
 
-$weatherMonitor =
-    'Weather control|'
-    . $CFG->ROOT_DIR
-    . 'Modules/Custom/ResultsPack/WeatherControl.php';
-
-$weatherViewer =
-    'Session viewer|'
-    . $CFG->ROOT_DIR
-    . 'Modules/Custom/ResultsPack/WeatherSessionView.php';
-
-$weatherTransfer =
-    'Import/export|'
-    . $CFG->ROOT_DIR
-    . 'Modules/Custom/ResultsPack/WeatherTransfer.php';
-
 if (!in_array($resultsPackTitle, $ret['RESULTSPACK'], true)) {
     array_unshift($ret['RESULTSPACK'], $resultsPackTitle);
 }
+
 if (!in_array($buildResults, $ret['RESULTSPACK'], true)) {
     $ret['RESULTSPACK'][] = $buildResults;
-}
-if (!in_array($weatherMonitor, $ret['RESULTSPACK'], true)) {
-    $ret['RESULTSPACK'][] = $weatherMonitor;
-}
-if (!in_array($weatherViewer, $ret['RESULTSPACK'], true)) {
-    $ret['RESULTSPACK'][] = $weatherViewer;
-}
-if (!in_array($weatherTransfer, $ret['RESULTSPACK'], true)) {
-    $ret['RESULTSPACK'][] = $weatherTransfer;
 }

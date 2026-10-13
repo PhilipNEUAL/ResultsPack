@@ -109,35 +109,6 @@
         }
     }
 
-    function applyRecordedWeatherDefaults(form){
-        if(!form)return;
-
-        form.querySelectorAll('[data-resultspack-recorded-default]').forEach(function(control){
-            var recorded=control.getAttribute('data-resultspack-recorded-default');
-
-            if(recorded===null)return;
-
-            var force=
-                control.getAttribute('data-resultspack-recorded-force')==='1';
-
-            var current=String(control.value||'').trim();
-
-            if(force||current===''){
-                control.value=recorded;
-                autoGrowTextarea(control);
-            }
-        });
-
-        var indoorNoData=form.elements['weather_indoor_na'];
-
-        if(
-            indoorNoData&&
-            indoorNoData.getAttribute('data-resultspack-recorded-uncheck')==='1'
-        ){
-            indoorNoData.checked=false;
-        }
-    }
-
     function rememberBaseDisabled(control){
         if(control.getAttribute('data-resultspack-base-disabled')===null){
             control.setAttribute('data-resultspack-base-disabled',control.disabled?'1':'0');
@@ -487,36 +458,6 @@
     document.addEventListener('click',function(event){
         var target=event.target;
         if(!target)return;
-        if(target.id==='resultspack-restore-recorded-weather'){
-            event.preventDefault();
-
-            var form=document.getElementById('resultspack-generator');
-            if(!form)return;
-
-            form.querySelectorAll('[data-resultspack-recorded-default]').forEach(function(control){
-                var recorded=control.getAttribute('data-resultspack-recorded-default');
-
-                if(recorded===null)return;
-
-                control.value=recorded;
-                autoGrowTextarea(control);
-            });
-
-            var indoorNoData=form.elements['weather_indoor_na'];
-
-            if(indoorNoData){
-                indoorNoData.checked=false;
-            }
-
-            updateWeather();
-
-            saveForm(
-                form,
-                form.getAttribute('data-storage-key')||'ianseo-results-pack'
-            );
-
-            return;
-        }
         if(target.id==='resultspack-award-add'){
             event.preventDefault();
             awardLibraryRequest({action:'add',kind:'award'},true);
@@ -592,7 +533,6 @@
         if(!form){refreshUi();return;}
         var key=form.getAttribute('data-storage-key')||'ianseo-results-pack';
         restoreForm(form,key);
-        applyRecordedWeatherDefaults(form);
         refreshUi();
         resizeAllAutoGrow();
 
@@ -654,5 +594,158 @@
             }
             saveForm(form,key);
         });
+    });
+})();
+
+(() => {
+    document.addEventListener('click', async (event) => {
+        const button = event.target.closest(
+            '#resultspack-use-archeryweather'
+        );
+
+        if (!button || button.disabled) return;
+
+        const form = document.getElementById('resultspack-generator');
+        const select = document.getElementById(
+            'resultspack-archeryweather-session'
+        );
+        const feedback = document.getElementById(
+            'resultspack-archeryweather-feedback'
+        );
+
+        if (!form || !select || !feedback) return;
+
+        const message = (text, error = false) => {
+            feedback.textContent = text;
+            feedback.style.color = error ? '#a12622' : '#245b2a';
+        };
+
+        if (!select.value) {
+            message('Please choose a weather session first.', true);
+            return;
+        }
+
+        const fields = [
+            'weather_notes',
+            'weather_temperature',
+            'weather_wind_speed',
+            'weather_humidity'
+        ].map((name) => form.elements[name]);
+
+        if (fields.some((field) => !field)) {
+            message('The weather fields could not be found.', true);
+            return;
+        }
+
+        const originals = fields.map((field) => field.value);
+        const [notes, temperature, wind, humidity] = fields;
+
+        const url = new URL(
+            'ArcheryWeatherSummary.php',
+            window.location.href
+        );
+
+        url.searchParams.set(
+            'tournament_id',
+            button.dataset.tournamentId
+        );
+        url.searchParams.set('session_id', select.value);
+
+        const controller = new AbortController();
+        const timeout = window.setTimeout(
+            () => controller.abort(),
+            20000
+        );
+
+        button.disabled = true;
+        select.disabled = true;
+        button.textContent = 'Loading summary…';
+        message('Reading stored ArcheryWeather observations…');
+
+        try {
+            const response = await fetch(url, {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                signal: controller.signal
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.ok) {
+                throw new Error(
+                    data.error || 'The weather summary could not be loaded.'
+                );
+            }
+
+            if (
+                typeof data.summary !== 'string'
+                || !(
+                    data.humidity_average === null
+                    || (
+                        typeof data.humidity_average === 'number'
+                        && Number.isFinite(data.humidity_average)
+                    )
+                )
+            ) {
+                throw new Error('The server returned an invalid summary.');
+            }
+
+            if (fields.some((field, index) =>
+                field.value !== originals[index]
+            )) {
+                throw new Error(
+                    'The weather fields were edited while loading. '
+                    + 'Press the button again if you want to replace those edits.'
+                );
+            }
+
+            notes.value = data.summary;
+            temperature.value = '';
+            wind.value = '';
+            humidity.value = data.humidity_average === null
+                ? ''
+                : String(Math.round(data.humidity_average));
+
+            const indoorNoData = form.elements['weather_indoor_na'];
+
+            if (indoorNoData) {
+                indoorNoData.checked = false;
+                indoorNoData.dispatchEvent(
+                    new Event('change', { bubbles: true })
+                );
+            }
+
+            // Use the existing form-saving and textarea-resizing handlers.
+            fields.forEach((field) => {
+                field.dispatchEvent(
+                    new Event('input', { bubbles: true })
+                );
+                field.dispatchEvent(
+                    new Event('change', { bubbles: true })
+                );
+            });
+
+            message(
+                'Summary copied from session #' + data.session_id
+                + ' (' + data.observation_count + ' observations). '
+                + 'You can edit the text below.'
+            );
+        } catch (error) {
+            const explanation = error.name === 'AbortError'
+                ? 'The request timed out.'
+                : error instanceof SyntaxError
+                    ? 'The server did not return a valid summary.'
+                    : error.message;
+
+            message(
+                explanation + ' Your existing weather text has been kept.',
+                true
+            );
+        } finally {
+            window.clearTimeout(timeout);
+            button.disabled = false;
+            select.disabled = false;
+            button.textContent = 'Use ArcheryWeather summary';
+        }
     });
 })();
